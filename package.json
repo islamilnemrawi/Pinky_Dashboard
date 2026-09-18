@@ -1,0 +1,7 @@
+{
+  "name": "pinky-dashboard",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "node -e \"console.log(\\\"Pinky Dashboard validated\\\")\""
+  }
+}

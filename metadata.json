@@ -1,0 +1,8 @@
+{
+  "name": "Pinky Dashboard",
+  "description": "لوحة تحكم المشرف لمتجر بينكي - إدارة الطلبات، المنتجات، العملاء، الأقسام، الشحن والتحليلات",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
