@@ -401,15 +401,14 @@ class PinkyViewModel(
                     code = coupon.code,
                     discountType = coupon.discountType.name,
                     discountValue = coupon.discountValue,
-                    minOrderAmount = coupon.minOrderAmount,
-                    maxDiscountAmount = coupon.maxDiscountAmount,
-                    isFreeShipping = coupon.isFreeShipping,
+                    minOrder = coupon.minOrderAmount,
+                    maxDiscount = coupon.maxDiscountAmount,
+                    freeShipping = coupon.isFreeShipping,
                     usageLimit = coupon.usageLimit,
-                    usageCount = coupon.usageCount,
-                    isFirstOrderOnly = coupon.isFirstOrderOnly,
-                    startDate = coupon.startDate.toString(),
-                    endDate = coupon.endDate.toString(),
-                    isActive = coupon.isActive
+                    usedCount = coupon.usageCount,
+                    startsAt = coupon.startDate.toString(),
+                    expiresAt = coupon.endDate.toString(),
+                    active = coupon.isActive
                 )
                 SupabaseClient.service.upsertCoupon(dto)
             } catch (e: Exception) {
@@ -435,7 +434,7 @@ class PinkyViewModel(
         }
         viewModelScope.launch {
             try {
-                SupabaseClient.service.patchCoupon("eq.$couponId", mapOf("is_active" to isActive))
+                SupabaseClient.service.patchCoupon("eq.$couponId", mapOf("active" to isActive))
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -495,7 +494,8 @@ class PinkyViewModel(
                     email = staff.email,
                     phone = staff.phone,
                     role = staff.role.name,
-                    permissions = staff.permissions.joinToString(",") { it.name },
+                    permissions = staff.permissions.associate { it.name to true },
+                    active = staff.isActive,
                     isActive = staff.isActive,
                     lastActive = staff.lastActive.toString()
                 )
@@ -523,7 +523,7 @@ class PinkyViewModel(
         }
         viewModelScope.launch {
             try {
-                SupabaseClient.service.patchStaffProfile("eq.$staffId", mapOf("is_active" to isActive))
+                SupabaseClient.service.patchStaffProfile("eq.$staffId", mapOf("active" to isActive, "is_active" to isActive))
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -617,18 +617,7 @@ class PinkyViewModel(
                 )
 
                 val customizationsDto = SupabaseSiteCustomizationsDto(
-                    announcementBarText = config.announcementBarText,
-                    showAnnouncementBar = config.showAnnouncementBar,
-                    heroTitle = config.heroTitle,
-                    heroSubtitle = config.heroSubtitle,
-                    heroButtonText = config.heroButtonText,
-                    heroImageUrl = config.heroImageUrl,
-                    showHeroBanner = config.showHeroBanner,
-                    showAboutSection = config.showAboutSection,
-                    aboutText = config.aboutText,
-                    primaryColorHex = config.primaryColorHex,
-                    fontFamily = config.fontFamily,
-                    sectionsJson = sectionsStr,
+                    id = 1,
                     config = siteConfigObj
                 )
                 SupabaseClient.service.upsertSiteCustomizations(customizationsDto)
@@ -670,10 +659,14 @@ class PinkyViewModel(
             // Register device
             try {
                 val deviceDto = SupabaseDashboardPushDeviceDto(
-                    id = "dev_android_" + android.os.Build.ID,
-                    deviceName = android.os.Build.MODEL + " (" + android.os.Build.MANUFACTURER + ")",
-                    pushToken = "dummy_token_" + System.currentTimeMillis(),
-                    lastActive = System.currentTimeMillis().toString()
+                    id = java.util.UUID.randomUUID().toString(),
+                    userId = SupabaseClient.userId,
+                    pushToken = "dummy_token_android_" + System.currentTimeMillis(),
+                    platform = "android",
+                    active = true,
+                    createdAt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).format(java.util.Date()),
+                    updatedAt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).format(java.util.Date()),
+                    lastSeenAt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).format(java.util.Date())
                 )
                 SupabaseClient.service.registerPushDevice(deviceDto)
             } catch (e: Exception) {
@@ -691,15 +684,15 @@ class PinkyViewModel(
                             code = dto.code,
                             discountType = try { DiscountType.valueOf(dto.discountType) } catch (e: Exception) { DiscountType.PERCENTAGE },
                             discountValue = dto.discountValue,
-                            minOrderAmount = dto.minOrderAmount ?: 0.0,
-                            maxDiscountAmount = dto.maxDiscountAmount,
-                            isFreeShipping = dto.isFreeShipping ?: false,
+                            minOrderAmount = dto.minOrder ?: 0.0,
+                            maxDiscountAmount = dto.maxDiscount,
+                            isFreeShipping = dto.freeShipping ?: false,
                             usageLimit = dto.usageLimit,
-                            usageCount = dto.usageCount ?: 0,
-                            isFirstOrderOnly = dto.isFirstOrderOnly ?: false,
-                            startDate = dto.startDate?.toLongOrNull() ?: System.currentTimeMillis(),
-                            endDate = dto.endDate?.toLongOrNull() ?: (System.currentTimeMillis() + 30L*24*60*60*1000),
-                            isActive = dto.isActive ?: true
+                            usageCount = dto.usedCount ?: 0,
+                            isFirstOrderOnly = false,
+                            startDate = dto.startsAt?.toLongOrNull() ?: System.currentTimeMillis(),
+                            endDate = dto.expiresAt?.toLongOrNull() ?: (System.currentTimeMillis() + 30L*24*60*60*1000),
+                            isActive = dto.active ?: true
                         )
                     }
                     _coupons.value = domainList
@@ -739,14 +732,14 @@ class PinkyViewModel(
                     val domainList = dtoList.map { dto ->
                         StaffMember(
                             id = dto.id,
-                            name = dto.name,
-                            email = dto.email,
-                            phone = dto.phone,
-                            role = try { UserRole.valueOf(dto.role) } catch (e: Exception) { UserRole.EMPLOYEE },
-                            permissions = dto.permissions.split(",").filter { it.isNotBlank() }.mapNotNull {
+                            name = dto.name ?: dto.email?.substringBefore("@") ?: "Staff Member",
+                            email = dto.email ?: "",
+                            phone = dto.phone ?: "",
+                            role = try { UserRole.valueOf(dto.role ?: "EMPLOYEE") } catch (e: Exception) { UserRole.EMPLOYEE },
+                            permissions = dto.permissions?.filterValues { it }?.keys?.mapNotNull {
                                 try { Permission.valueOf(it) } catch (e: Exception) { null }
-                            }.toSet(),
-                            isActive = dto.isActive ?: true,
+                            }?.toSet() ?: emptySet(),
+                            isActive = dto.active ?: dto.isActive ?: true,
                             lastActive = dto.lastActive?.toLongOrNull() ?: System.currentTimeMillis()
                         )
                     }
@@ -778,8 +771,9 @@ class PinkyViewModel(
                 if (customizationsResponse.isSuccessful) {
                     val customizations = customizationsResponse.body()?.firstOrNull()
                     if (customizations != null) {
-                        val parsedSections = if (!customizations.sectionsJson.isNullOrBlank()) {
-                            customizations.sectionsJson.split(";").filter { it.isNotBlank() }.mapNotNull { sec ->
+                        val sectionsJsonLocal = customizations.sectionsJson
+                        val parsedSections = if (!sectionsJsonLocal.isNullOrBlank()) {
+                            sectionsJsonLocal.split(";").filter { it.isNotBlank() }.mapNotNull { sec ->
                                 val parts = sec.split(":")
                                 if (parts.size >= 4) {
                                     SectionDisplayConfig(

@@ -166,7 +166,7 @@ class OrderRepositoryImpl(
                         discountAmount = dto.discountAmount ?: 0.0,
                         totalAmount = dto.total ?: 0.0,
                         paymentMethod = dto.paymentMethod ?: "",
-                        paymentStatus = dto.paymentStatus ?: "PENDING",
+                        paymentStatus = if (dto.status == "تم التسليم" || dto.status == "DELIVERED") "PAID" else "PENDING",
                         status = dto.status ?: "NEW",
                         createdAt = dto.createdAt?.toLongOrNull() ?: System.currentTimeMillis(),
                         notes = dto.notes ?: "",
@@ -250,7 +250,6 @@ class OrderRepositoryImpl(
                 discountAmount = order.discountAmount,
                 total = order.totalAmount,
                 paymentMethod = order.paymentMethod.arabicLabel,
-                paymentStatus = order.paymentStatus.name,
                 status = order.status.arabicLabel,
                 createdAt = order.createdAt.toString(),
                 notes = order.notes,
@@ -365,28 +364,27 @@ class ProductRepositoryImpl(
 
     override suspend fun saveProduct(product: Product): Result<Product> = withContext(Dispatchers.IO) {
         try {
-            // 1. Save to Supabase
-            val dto = SupabaseProductDto(
+            // 1. Save to Supabase (using products table via SupabaseProductAdminDto)
+            val dto = SupabaseProductAdminDto(
                 id = product.id,
                 name = product.name,
                 description = product.description,
-                imageUrl = product.imageUrl,
-                gallery = product.gallery,
-                categoryId = product.categoryId,
-                categoryName = product.categoryName,
+                image = product.imageUrl,
+                category = product.categoryName,
                 price = product.price,
                 oldPrice = product.oldPrice,
-                discountPercent = product.discountPercent,
                 wholesalePrice = product.wholesalePrice,
-                internalCode = product.internalCode,
+                code = product.internalCode,
                 stock = product.stock,
+                discount = product.discountPercent,
+                featured = product.isFeatured,
+                active = product.isActive,
+                createdAt = product.createdAt.toString(),
                 colors = product.colors,
                 sizes = product.sizes,
-                isActive = product.isActive,
-                isFeatured = product.isFeatured,
-                createdAt = product.createdAt.toString()
+                gallery = product.gallery
             )
-            val response = SupabaseClient.service.upsertProduct(dto)
+            val response = SupabaseClient.service.upsertAdminProduct(dto)
             if (!response.isSuccessful) {
                 val errorMsg = response.errorBody()?.string() ?: response.message()
                 return@withContext Result.failure(Exception("Supabase saveProduct failed: $errorMsg"))
@@ -422,8 +420,8 @@ class ProductRepositoryImpl(
 
     override suspend fun deleteProduct(productId: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            // 1. Delete from Supabase
-            val response = SupabaseClient.service.deleteProduct("eq.$productId")
+            // 1. Delete from Supabase products table
+            val response = SupabaseClient.service.deleteAdminProduct("eq.$productId")
             if (!response.isSuccessful) {
                 val errorMsg = response.errorBody()?.string() ?: response.message()
                 return@withContext Result.failure(Exception("Supabase deleteProduct failed: $errorMsg"))
@@ -439,8 +437,8 @@ class ProductRepositoryImpl(
 
     override suspend fun toggleProductActive(productId: String, isActive: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            // 1. Patch in Supabase
-            val response = SupabaseClient.service.patchProduct("eq.$productId", mapOf("is_active" to isActive))
+            // 1. Patch in Supabase products table
+            val response = SupabaseClient.service.patchAdminProduct("eq.$productId", mapOf("active" to isActive))
             if (!response.isSuccessful) {
                 val errorMsg = response.errorBody()?.string() ?: response.message()
                 return@withContext Result.failure(Exception("Supabase toggleProductActive failed: $errorMsg"))
@@ -456,42 +454,91 @@ class ProductRepositoryImpl(
 
     override suspend fun syncProducts(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            val response = SupabaseClient.service.getProducts()
-            if (response.isSuccessful) {
-                val dtoList = response.body() ?: emptyList()
-                val entities = dtoList.map { dto ->
-                    ProductEntity(
-                        id = dto.id,
-                        name = dto.name,
-                        description = dto.description ?: "",
-                        imageUrl = dto.imageUrl ?: "",
-                        galleryJson = dto.gallery?.joinToString(",") ?: "",
-                        categoryId = dto.categoryId ?: "",
-                        categoryName = dto.categoryName ?: "",
-                        price = dto.price,
-                        oldPrice = dto.oldPrice,
-                        discountPercent = dto.discountPercent,
-                        wholesalePrice = dto.wholesalePrice,
-                        internalCode = dto.internalCode,
-                        stock = dto.stock ?: 0,
-                        colorsJson = dto.colors?.joinToString(",") ?: "",
-                        sizesJson = dto.sizes?.joinToString(",") ?: "",
-                        isActive = dto.isActive ?: true,
-                        isFeatured = dto.isFeatured ?: false,
-                        createdAt = dto.createdAt?.toLongOrNull() ?: System.currentTimeMillis()
-                    )
-                }
-                productDao.insertProducts(entities)
-                Result.success(Unit)
-            } else {
-                val errorBodyStr = response.errorBody()?.string() ?: ""
-                val errMsg = "Table: products | Operation: syncProducts | Error: HTTP ${response.code()} ${response.message()} | Payload: $errorBodyStr"
-                if (isSupabasePermissionError(response.code(), errorBodyStr)) {
-                    android.util.Log.w("SupabaseSync", "Table: products | Operation: syncProducts | Status: Restricted (HTTP ${response.code()} / RLS). Using local cached data.")
+            // If authenticated, we fetch from admin table products to get full admin details
+            // otherwise, read-only fallback from catalog_products view.
+            val isPlaceholderKey = SupabaseClient.supabaseAnonKey.contains("placeholder")
+            if (isPlaceholderKey) {
+                android.util.Log.d("SupabaseSync", "Using sandbox placeholder, skipping remote syncProducts.")
+                return@withContext Result.success(Unit)
+            }
+
+            if (SupabaseClient.isAuthenticated) {
+                val response = SupabaseClient.service.getAdminProducts()
+                if (response.isSuccessful) {
+                    val dtoList = response.body() ?: emptyList()
+                    val entities = dtoList.map { dto ->
+                        ProductEntity(
+                            id = dto.id,
+                            name = dto.name,
+                            description = dto.description ?: "",
+                            imageUrl = dto.image ?: "",
+                            galleryJson = dto.gallery?.joinToString(",") ?: "",
+                            categoryId = "",
+                            categoryName = dto.category ?: "",
+                            price = dto.price,
+                            oldPrice = dto.oldPrice,
+                            discountPercent = dto.discount,
+                            wholesalePrice = dto.wholesalePrice,
+                            internalCode = dto.code,
+                            stock = dto.stock ?: 0,
+                            colorsJson = dto.colors?.joinToString(",") ?: "",
+                            sizesJson = dto.sizes?.joinToString(",") ?: "",
+                            isActive = dto.active ?: true,
+                            isFeatured = dto.featured ?: false,
+                            createdAt = dto.createdAt?.toLongOrNull() ?: System.currentTimeMillis()
+                        )
+                    }
+                    productDao.insertProducts(entities)
                     Result.success(Unit)
                 } else {
-                    android.util.Log.e("SupabaseError", errMsg)
-                    Result.failure(Exception(errMsg))
+                    val errorBodyStr = response.errorBody()?.string() ?: ""
+                    val errMsg = "Table: products | Operation: syncProducts(Admin) | Error: HTTP ${response.code()} ${response.message()} | Payload: $errorBodyStr"
+                    if (isSupabasePermissionError(response.code(), errorBodyStr)) {
+                        android.util.Log.w("SupabaseSync", "Table: products | Operation: syncProducts | Status: Restricted (HTTP ${response.code()} / RLS). Using local cached data.")
+                        Result.success(Unit)
+                    } else {
+                        android.util.Log.e("SupabaseError", errMsg)
+                        Result.failure(Exception(errMsg))
+                    }
+                }
+            } else {
+                val response = SupabaseClient.service.getProducts()
+                if (response.isSuccessful) {
+                    val dtoList = response.body() ?: emptyList()
+                    val entities = dtoList.map { dto ->
+                        ProductEntity(
+                            id = dto.id,
+                            name = dto.name,
+                            description = dto.description ?: "",
+                            imageUrl = dto.image ?: "",
+                            galleryJson = "",
+                            categoryId = "",
+                            categoryName = dto.category ?: "",
+                            price = dto.price,
+                            oldPrice = dto.oldPrice,
+                            discountPercent = dto.discount,
+                            wholesalePrice = null,
+                            internalCode = null,
+                            stock = 0,
+                            colorsJson = "",
+                            sizesJson = "",
+                            isActive = dto.active ?: true,
+                            isFeatured = dto.featured ?: false,
+                            createdAt = dto.createdAt?.toLongOrNull() ?: System.currentTimeMillis()
+                        )
+                    }
+                    productDao.insertProducts(entities)
+                    Result.success(Unit)
+                } else {
+                    val errorBodyStr = response.errorBody()?.string() ?: ""
+                    val errMsg = "Table: products | Operation: syncProducts(View) | Error: HTTP ${response.code()} ${response.message()} | Payload: $errorBodyStr"
+                    if (isSupabasePermissionError(response.code(), errorBodyStr)) {
+                        android.util.Log.w("SupabaseSync", "Table: products | Operation: syncProducts | Status: Restricted (HTTP ${response.code()} / RLS). Using local cached data.")
+                        Result.success(Unit)
+                    } else {
+                        android.util.Log.e("SupabaseError", errMsg)
+                        Result.failure(Exception(errMsg))
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -678,32 +725,45 @@ class OfferRepositoryImpl(
 
     override suspend fun saveOffer(offer: Offer): Result<Offer> = withContext(Dispatchers.IO) {
         try {
-            // 1. Save to Supabase
-            val dto = SupabaseOfferDto(
-                id = offer.id,
-                title = offer.title,
-                description = offer.description,
-                discountText = offer.discountText,
-                imageUrl = offer.imageUrl,
-                buttonText = offer.buttonText,
-                targetCategoryId = offer.targetCategoryId,
-                targetCategoryName = offer.targetCategoryName,
-                sortOrder = offer.sortOrder,
-                isActive = offer.isActive,
-                startDate = offer.startDate.toString(),
-                endDate = offer.endDate.toString()
-            )
-            try {
-                val response = if (offer.isBanner || offer.id.startsWith("ban_")) {
-                    SupabaseClient.service.upsertBanner(dto)
+            val isPlaceholderKey = SupabaseClient.supabaseAnonKey.contains("placeholder")
+            if (!isPlaceholderKey) {
+                if (offer.isBanner || offer.id.startsWith("ban_")) {
+                    val bannerDto = SupabaseBannerDto(
+                        id = offer.id,
+                        title = offer.title,
+                        subtitle = offer.description,
+                        image = offer.imageUrl,
+                        buttonText = offer.buttonText,
+                        buttonAction = offer.targetCategoryId ?: offer.targetCategoryName,
+                        sortOrder = offer.sortOrder,
+                        active = offer.isActive,
+                        createdAt = null
+                    )
+                    val response = SupabaseClient.service.upsertBanner(bannerDto)
+                    if (!response.isSuccessful) {
+                        android.util.Log.e("SupabaseError", "upsertBanner failed: ${response.errorBody()?.string()}")
+                    }
                 } else {
-                    SupabaseClient.service.upsertOffer(dto)
+                    val dto = SupabaseOfferDto(
+                        id = offer.id,
+                        title = offer.title,
+                        description = offer.description,
+                        discount = offer.discountText,
+                        image = offer.imageUrl,
+                        active = offer.isActive,
+                        startsAt = offer.startDate.toString(),
+                        endsAt = offer.endDate.toString(),
+                        createdAt = null,
+                        buttonText = offer.buttonText,
+                        targetCategory = offer.targetCategoryId ?: offer.targetCategoryName,
+                        sortOrder = offer.sortOrder,
+                        isActive = offer.isActive
+                    )
+                    val response = SupabaseClient.service.upsertOffer(dto)
+                    if (!response.isSuccessful) {
+                        android.util.Log.e("SupabaseError", "upsertOffer failed: ${response.errorBody()?.string()}")
+                    }
                 }
-                if (!response.isSuccessful) {
-                    println("Supabase saveOffer failed: ${response.errorBody()?.string()}")
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
             }
 
             // 2. Save to local Cache
@@ -730,12 +790,14 @@ class OfferRepositoryImpl(
 
     override suspend fun deleteOffer(offerId: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            // 1. Delete from Supabase (try both offers and banners)
-            try {
-                SupabaseClient.service.deleteOffer("eq.$offerId")
-                SupabaseClient.service.deleteBanner("eq.$offerId")
-            } catch (e: Exception) {
-                e.printStackTrace()
+            val isPlaceholderKey = SupabaseClient.supabaseAnonKey.contains("placeholder")
+            if (!isPlaceholderKey) {
+                try {
+                    SupabaseClient.service.deleteOffer("eq.$offerId")
+                    SupabaseClient.service.deleteBanner("eq.$offerId")
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
 
             // 2. Delete from local Cache
@@ -748,6 +810,12 @@ class OfferRepositoryImpl(
 
     override suspend fun syncOffers(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
+            val isPlaceholderKey = SupabaseClient.supabaseAnonKey.contains("placeholder")
+            if (isPlaceholderKey) {
+                android.util.Log.d("SupabaseSync", "Using sandbox placeholder, skipping remote syncOffers.")
+                return@withContext Result.success(Unit)
+            }
+
             val offersResp = SupabaseClient.service.getOffers()
             val bannersResp = SupabaseClient.service.getBanners()
 
@@ -760,15 +828,15 @@ class OfferRepositoryImpl(
                             id = dto.id,
                             title = dto.title,
                             description = dto.description ?: "",
-                            discountText = dto.discountText ?: "",
-                            imageUrl = dto.imageUrl ?: "",
+                            discountText = dto.discount ?: "",
+                            imageUrl = dto.image ?: "",
                             buttonText = dto.buttonText ?: "تسوقي الآن",
-                            targetCategoryId = dto.targetCategoryId,
-                            targetCategoryName = dto.targetCategoryName,
+                            targetCategoryId = dto.targetCategory,
+                            targetCategoryName = dto.targetCategory ?: "",
                             sortOrder = dto.sortOrder ?: 0,
-                            isActive = dto.isActive ?: true,
-                            startDate = dto.startDate?.toLongOrNull() ?: System.currentTimeMillis(),
-                            endDate = dto.endDate?.toLongOrNull() ?: (System.currentTimeMillis() + 30L*24*60*60*1000)
+                            isActive = dto.active ?: dto.isActive ?: true,
+                            startDate = dto.startsAt?.toLongOrNull() ?: System.currentTimeMillis(),
+                            endDate = dto.endsAt?.toLongOrNull() ?: (System.currentTimeMillis() + 30L*24*60*60*1000)
                         )
                     )
                 }
@@ -781,16 +849,16 @@ class OfferRepositoryImpl(
                         OfferEntity(
                             id = finalId,
                             title = dto.title,
-                            description = dto.description ?: "",
-                            discountText = dto.discountText ?: "",
-                            imageUrl = dto.imageUrl ?: "",
+                            description = dto.subtitle ?: "",
+                            discountText = "",
+                            imageUrl = dto.image ?: "",
                             buttonText = dto.buttonText ?: "تسوقي الآن",
-                            targetCategoryId = dto.targetCategoryId,
-                            targetCategoryName = dto.targetCategoryName,
+                            targetCategoryId = dto.buttonAction,
+                            targetCategoryName = dto.buttonAction ?: "",
                             sortOrder = dto.sortOrder ?: 0,
-                            isActive = dto.isActive ?: true,
-                            startDate = dto.startDate?.toLongOrNull() ?: System.currentTimeMillis(),
-                            endDate = dto.endDate?.toLongOrNull() ?: (System.currentTimeMillis() + 30L*24*60*60*1000)
+                            isActive = dto.active ?: true,
+                            startDate = System.currentTimeMillis(),
+                            endDate = System.currentTimeMillis() + 365L*24*60*60*1000
                         )
                     )
                 }
@@ -986,10 +1054,11 @@ class ShippingRepositoryImpl(
                 Result.failure(Exception("$govErr | $centerErr"))
             }
         } catch (e: Exception) {
-            android.util.Log.e("SupabaseDiagnostic", "Supabase shipping exception: ${e.message}", e)
             if (isNetworkException(e)) {
+                android.util.Log.w("SupabaseDiagnostic", "Supabase shipping network warning (offline): ${e.message}")
                 android.util.Log.w("SupabaseSync", "syncShipping offline: ${e.message}")
             } else {
+                android.util.Log.e("SupabaseDiagnostic", "Supabase shipping exception: ${e.message}", e)
                 android.util.Log.e("SupabaseSync", "syncShipping exception: ${e.message}", e)
             }
             Result.failure(e)
@@ -1195,15 +1264,29 @@ class AuthRepositoryImpl(private val context: android.content.Context) : AuthRep
         } else {
             // Check if OWNER_PASSWORD is provided and try silent auto-login
             val ownerPass = try { com.pinky.dashboard.BuildConfig.OWNER_PASSWORD } catch (e: Throwable) { "" }
-            val ownerEmail = "ilnemrawy@gmail.com"
             if (ownerPass.isNotBlank() && !ownerPass.contains("placeholder")) {
-                android.util.Log.i("SupabaseAuth", "Attempting silent auto-login for $ownerEmail")
-                val result = login(ownerEmail, ownerPass)
-                if (result.isSuccess) {
-                    android.util.Log.i("SupabaseAuth", "Silent auto-login successful for $ownerEmail")
+                val candidates = listOf("ilnemrawy@gmail.com", "ilnemrawi@gmail.com", "islamilnemrawi222@gmail.com")
+                var success = false
+                var lastError = ""
+                for (email in candidates) {
+                    android.util.Log.i("SupabaseAuth", "Attempting silent auto-login for $email")
+                    val result = login(email, ownerPass)
+                    if (result.isSuccess) {
+                        android.util.Log.i("SupabaseAuth", "Silent auto-login successful for $email")
+                        success = true
+                        break
+                    } else {
+                        lastError = result.exceptionOrNull()?.message ?: ""
+                    }
+                }
+                if (success) {
                     return@withContext true
                 } else {
-                    android.util.Log.e("SupabaseAuth", "Silent auto-login failed: ${result.exceptionOrNull()?.message}")
+                    if (lastError.contains("UnknownHostException") || lastError.contains("تعذر الاتصال") || lastError.contains("Unable to resolve host") || lastError.contains("Connection")) {
+                        android.util.Log.w("SupabaseAuth", "Silent auto-login offline or network warning: $lastError")
+                    } else {
+                        android.util.Log.e("SupabaseAuth", "Silent auto-login failed: $lastError")
+                    }
                 }
             }
         }
@@ -1232,39 +1315,15 @@ class AuthRepositoryImpl(private val context: android.content.Context) : AuthRep
     }
 
     override suspend fun login(email: String, pass: String): Result<AdminUser> = withContext(Dispatchers.IO) {
+        val url = SupabaseClient.supabaseUrl
+        val key = SupabaseClient.supabaseAnonKey
+        val isConfigMissing = url.isBlank() || key.isBlank() || url.contains("placeholder") || key.contains("placeholder")
+
+        if (isConfigMissing) {
+            return@withContext Result.failure(Exception("[Missing Configuration] إعدادات السحابة غير مكتملة أو تحتوي على قيم تجريبية (Placeholder). يرجى تكوين المتغيرات بشكل صحيح."))
+        }
+
         try {
-            val isPlaceholderKey = SupabaseClient.supabaseAnonKey.contains("placeholder")
-            if (isPlaceholderKey) {
-                val role = if (email.equals("ilnemrawi@gmail.com", ignoreCase = true) || email.equals("ilnemrawy@gmail.com", ignoreCase = true) || email.contains("owner", ignoreCase = true)) {
-                    UserRole.OWNER
-                } else {
-                    UserRole.ADMIN
-                }
-                val user = AdminUser(
-                    id = "sandbox_user_id",
-                    name = if (role == UserRole.OWNER) "إسلام النمراوي (Sandbox)" else "مسؤول تجريبي (Sandbox)",
-                    email = email,
-                    role = role,
-                    permissions = Permission.defaultPermissionsFor(role)
-                )
-                
-                SupabaseClient.accessToken = "sandbox_token"
-                SupabaseClient.userId = user.id
-                SupabaseClient.isAuthenticated = true
-                SupabaseClient.isSessionReady = true
-
-                prefs.edit()
-                    .putString("user_token", "sandbox_token")
-                    .putString("user_id", user.id)
-                    .putString("user_name", user.name)
-                    .putString("user_email", user.email)
-                    .putString("user_role", user.role.name)
-                    .apply()
-
-                _currentUser.value = user
-                return@withContext Result.success(user)
-            }
-
             val response = SupabaseClient.service.login(SupabaseLoginRequest(email, pass))
             if (response.isSuccessful) {
                 val loginData = response.body()
@@ -1283,22 +1342,31 @@ class AuthRepositoryImpl(private val context: android.content.Context) : AuthRep
                     var staffName = "مسؤول بينكي"
                     var staffRole = UserRole.ADMIN
                     
-                    if (email.equals("ilnemrawi@gmail.com", ignoreCase = true) || email.equals("ilnemrawy@gmail.com", ignoreCase = true)) {
+                    if (email.equals("ilnemrawi@gmail.com", ignoreCase = true) || email.equals("ilnemrawy@gmail.com", ignoreCase = true) || email.equals("islamilnemrawi222@gmail.com", ignoreCase = true)) {
                         staffRole = UserRole.OWNER
                         staffName = "إسلام النمراوي (المالك)"
                     }
 
+                    var dbPermissions = Permission.defaultPermissionsFor(staffRole)
                     try {
                         val profileResponse = SupabaseClient.service.getStaffProfileByEmail("eq.$email")
                         if (profileResponse.isSuccessful) {
                             val profiles = profileResponse.body()
                             if (!profiles.isNullOrEmpty()) {
                                 val profile = profiles[0]
-                                staffName = profile.name
-                                staffRole = when (profile.role.lowercase()) {
+                                staffName = profile.name ?: email.substringBefore("@")
+                                staffRole = when ((profile.role ?: "employee").lowercase()) {
                                     "owner" -> UserRole.OWNER
                                     "employee" -> UserRole.EMPLOYEE
                                     else -> UserRole.ADMIN
+                                }
+                                profile.permissions?.let { permMap ->
+                                    val parsed = permMap.filterValues { it }.keys.mapNotNull {
+                                        try { Permission.valueOf(it) } catch (e: Exception) { null }
+                                    }.toSet()
+                                    if (parsed.isNotEmpty()) {
+                                        dbPermissions = parsed
+                                    }
                                 }
                             }
                         }
@@ -1311,7 +1379,7 @@ class AuthRepositoryImpl(private val context: android.content.Context) : AuthRep
                         name = staffName,
                         email = email,
                         role = staffRole,
-                        permissions = Permission.defaultPermissionsFor(staffRole)
+                        permissions = dbPermissions
                     )
                     
                     // Persist session to SharedPreferences
@@ -1330,16 +1398,29 @@ class AuthRepositoryImpl(private val context: android.content.Context) : AuthRep
                     android.util.Log.i("SupabaseAuth", "AUTHENTICATED=true")
                     Result.success(user)
                 } else {
-                    Result.failure(Exception("استجابة الخادم فارغة"))
+                    Result.failure(Exception("[Supabase/API Failure] استجابة الخادم فارغة."))
                 }
             } else {
                 val errorMsg = response.errorBody()?.string() ?: ""
-                android.util.Log.e("SupabaseAuth", "Login failed: $errorMsg")
-                Result.failure(Exception("فشل تسجيل الدخول: اسم المستخدم أو كلمة المرور غير صحيحة"))
+                val isInvalidCredentials = errorMsg.contains("invalid_grant") || errorMsg.contains("Invalid login credentials") || errorMsg.contains("invalid_credentials")
+                if (isInvalidCredentials) {
+                    android.util.Log.w("SupabaseAuth", "Login warning (invalid credentials): $errorMsg")
+                    Result.failure(Exception("[Invalid Credentials] اسم المستخدم أو كلمة المرور غير صحيحة."))
+                } else {
+                    android.util.Log.e("SupabaseAuth", "Login failed: $errorMsg")
+                    Result.failure(Exception("[Supabase/API Failure] خطأ من خادم Supabase (كود ${response.code()}): $errorMsg"))
+                }
             }
         } catch (e: Exception) {
-            android.util.Log.e("SupabaseAuth", "Login exception: ${e.message}")
-            Result.failure(e)
+            if (e is java.net.UnknownHostException || e.message?.contains("Unable to resolve host") == true) {
+                android.util.Log.w("SupabaseAuth", "Network connectivity warning: ${e.message}")
+                Result.failure(Exception("[Network/Connection Failure] تعذر الاتصال بالسحابة (خطأ في حل عنوان الخادم أو انقطاع الإنترنت). يرجى التأكد من اتصالك بالإنترنت وصحة الـ DNS للعنوان: $url"))
+            } else if (e is java.io.IOException) {
+                Result.failure(Exception("[Network/Connection Failure] فشل في اتصال الشبكة بـ ($url): ${e.localizedMessage}"))
+            } else {
+                android.util.Log.e("SupabaseAuth", "Login exception: ${e.message}")
+                Result.failure(Exception("[Supabase/API Failure] حدث خطأ غير متوقع أثناء محاولة الدخول: ${e.localizedMessage}"))
+            }
         }
     }
 

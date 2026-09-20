@@ -298,7 +298,11 @@ fun CategoryEditDialog(
                         uploadError = "خطأ: لم نتمكن من قراءة ملف الصورة المحدد."
                     }
                 } catch (e: Exception) {
-                    android.util.Log.e("SupabaseDiagnostic", "Image upload exception", e)
+                    if (e is java.net.UnknownHostException || e is java.net.ConnectException || e is java.net.SocketTimeoutException || e.message?.contains("Unable to resolve host") == true) {
+                        android.util.Log.w("SupabaseDiagnostic", "Image upload network warning (offline): ${e.message}")
+                    } else {
+                        android.util.Log.e("SupabaseDiagnostic", "Image upload exception", e)
+                    }
                     uploadError = "عذرًا، حدث خطأ غير متوقع: ${e.localizedMessage}"
                 } finally {
                     isUploading = false

@@ -31,21 +31,39 @@ data class SupabaseProductDto(
     @Json(name = "id") val id: String,
     @Json(name = "name") val name: String,
     @Json(name = "description") val description: String? = null,
-    @Json(name = "image_url") val imageUrl: String? = null,
-    @Json(name = "gallery") val gallery: List<String>? = null,
-    @Json(name = "category_id") val categoryId: String? = null,
-    @Json(name = "category_name") val categoryName: String? = null,
+    @Json(name = "image") val image: String? = null,
+    @Json(name = "category") val category: String? = null,
     @Json(name = "price") val price: Double,
     @Json(name = "old_price") val oldPrice: Double? = null,
-    @Json(name = "discount_percent") val discountPercent: Int? = null,
+    @Json(name = "discount") val discount: Int? = null,
+    @Json(name = "featured") val featured: Boolean? = null,
+    @Json(name = "active") val active: Boolean? = null,
+    @Json(name = "created_at") val createdAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SupabaseProductAdminDto(
+    @Json(name = "id") val id: String,
+    @Json(name = "name") val name: String,
+    @Json(name = "description") val description: String? = null,
+    @Json(name = "image") val image: String? = null,
+    @Json(name = "category") val category: String? = null,
+    @Json(name = "price") val price: Double,
+    @Json(name = "old_price") val oldPrice: Double? = null,
     @Json(name = "wholesale_price") val wholesalePrice: Double? = null,
-    @Json(name = "internal_code") val internalCode: String? = null,
+    @Json(name = "code") val code: String? = null,
     @Json(name = "stock") val stock: Int? = null,
+    @Json(name = "discount") val discount: Int? = null,
+    @Json(name = "featured") val featured: Boolean? = null,
+    @Json(name = "active") val active: Boolean? = null,
+    @Json(name = "created_at") val createdAt: String? = null,
     @Json(name = "colors") val colors: List<String>? = null,
     @Json(name = "sizes") val sizes: List<String>? = null,
-    @Json(name = "is_active") val isActive: Boolean? = null,
-    @Json(name = "is_featured") val isFeatured: Boolean? = null,
-    @Json(name = "created_at") val createdAt: String? = null
+    @Json(name = "variants") val variants: String? = null,
+    @Json(name = "sku") val sku: String? = null,
+    @Json(name = "weight") val weight: Double? = null,
+    @Json(name = "gallery") val gallery: List<String>? = null,
+    @Json(name = "color_options") val colorOptions: List<String>? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -65,7 +83,7 @@ data class SupabaseCustomerDto(
 
 @JsonClass(generateAdapter = true)
 data class SupabaseOrderItemDto(
-    @Json(name = "id") val id: String,
+    @Json(name = "id") val id: String? = null,
     @Json(name = "order_id") val orderId: String? = null,
     @Json(name = "product_id") val productId: String? = null,
     @Json(name = "product_name") val productName: String? = null,
@@ -92,7 +110,6 @@ data class SupabaseOrderDto(
     @Json(name = "discount_amount") val discountAmount: Double? = null,
     @Json(name = "total") val total: Double? = null,
     @Json(name = "payment_method") val paymentMethod: String? = null,
-    @Json(name = "payment_status") val paymentStatus: String? = null,
     @Json(name = "status") val status: String? = null,
     @Json(name = "created_at") val createdAt: String? = null,
     @Json(name = "notes") val notes: String? = null,
@@ -106,15 +123,29 @@ data class SupabaseOfferDto(
     @Json(name = "id") val id: String,
     @Json(name = "title") val title: String,
     @Json(name = "description") val description: String? = null,
-    @Json(name = "discount_text") val discountText: String? = null,
-    @Json(name = "image_url") val imageUrl: String? = null,
+    @Json(name = "discount") val discount: String? = null,
+    @Json(name = "image") val image: String? = null,
+    @Json(name = "active") val active: Boolean? = null,
+    @Json(name = "starts_at") val startsAt: String? = null,
+    @Json(name = "ends_at") val endsAt: String? = null,
+    @Json(name = "created_at") val createdAt: String? = null,
     @Json(name = "button_text") val buttonText: String? = null,
-    @Json(name = "target_category_id") val targetCategoryId: String? = null,
-    @Json(name = "target_category_name") val targetCategoryName: String? = null,
+    @Json(name = "target_category") val targetCategory: String? = null,
     @Json(name = "sort_order") val sortOrder: Int? = null,
-    @Json(name = "is_active") val isActive: Boolean? = null,
-    @Json(name = "start_date") val startDate: String? = null,
-    @Json(name = "end_date") val endDate: String? = null
+    @Json(name = "is_active") val isActive: Boolean? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class SupabaseBannerDto(
+    @Json(name = "id") val id: String,
+    @Json(name = "title") val title: String,
+    @Json(name = "subtitle") val subtitle: String? = null,
+    @Json(name = "image") val image: String? = null,
+    @Json(name = "button_text") val buttonText: String? = null,
+    @Json(name = "button_action") val buttonAction: String? = null,
+    @Json(name = "sort_order") val sortOrder: Int? = null,
+    @Json(name = "active") val active: Boolean? = null,
+    @Json(name = "created_at") val createdAt: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -180,15 +211,14 @@ data class SupabaseCouponDto(
     @Json(name = "code") val code: String,
     @Json(name = "discount_type") val discountType: String,
     @Json(name = "discount_value") val discountValue: Double,
-    @Json(name = "min_order_amount") val minOrderAmount: Double? = 0.0,
-    @Json(name = "max_discount_amount") val maxDiscountAmount: Double? = null,
-    @Json(name = "is_free_shipping") val isFreeShipping: Boolean? = false,
+    @Json(name = "min_order") val minOrder: Double? = 0.0,
+    @Json(name = "max_discount") val maxDiscount: Double? = null,
+    @Json(name = "free_shipping") val freeShipping: Boolean? = false,
     @Json(name = "usage_limit") val usageLimit: Int? = null,
-    @Json(name = "usage_count") val usageCount: Int? = 0,
-    @Json(name = "is_first_order_only") val isFirstOrderOnly: Boolean? = false,
-    @Json(name = "start_date") val startDate: String? = null,
-    @Json(name = "end_date") val endDate: String? = null,
-    @Json(name = "is_active") val isActive: Boolean? = true
+    @Json(name = "used_count") val usedCount: Int? = 0,
+    @Json(name = "starts_at") val startsAt: String? = null,
+    @Json(name = "expires_at") val expiresAt: String? = null,
+    @Json(name = "active") val active: Boolean? = true
 )
 
 @JsonClass(generateAdapter = true)
@@ -202,30 +232,57 @@ data class SupabaseStoreSettingsDto(
 
 @JsonClass(generateAdapter = true)
 data class SupabaseSiteCustomizationsDto(
-    @Json(name = "id") val id: String = "customization_1",
-    @Json(name = "announcement_bar_text") val announcementBarText: String,
-    @Json(name = "show_announcement_bar") val showAnnouncementBar: Boolean,
-    @Json(name = "hero_title") val heroTitle: String,
-    @Json(name = "hero_subtitle") val heroSubtitle: String,
-    @Json(name = "hero_button_text") val heroButtonText: String,
-    @Json(name = "hero_image_url") val heroImageUrl: String,
-    @Json(name = "show_hero_banner") val showHeroBanner: Boolean,
-    @Json(name = "show_about_section") val showAboutSection: Boolean,
-    @Json(name = "about_text") val aboutText: String,
-    @Json(name = "primary_color_hex") val primaryColorHex: String,
-    @Json(name = "font_family") val fontFamily: String,
-    @Json(name = "sections_json") val sectionsJson: String? = null,
-    @Json(name = "config") val config: SiteCustomizationConfig? = null
-)
+    @Json(name = "id") val id: Int = 1,
+    @Json(name = "config") val config: SiteCustomizationConfig? = null,
+    @Json(name = "updated_at") val updatedAt: String? = null
+) {
+    // Computed helper properties to read from nested JSONB config safely:
+    val announcementBarText: String
+        get() = config?.announcement?.message1 ?: ""
+
+    val showAnnouncementBar: Boolean
+        get() = config?.announcement?.isVisible ?: true
+
+    val heroTitle: String
+        get() = config?.hero?.slides?.firstOrNull()?.title ?: ""
+
+    val heroSubtitle: String
+        get() = config?.hero?.slides?.firstOrNull()?.description ?: ""
+
+    val heroButtonText: String
+        get() = config?.hero?.slides?.firstOrNull()?.buttonText ?: ""
+
+    val heroImageUrl: String
+        get() = config?.hero?.slides?.firstOrNull()?.imageUrl ?: ""
+
+    val showHeroBanner: Boolean
+        get() = config?.hero?.slides?.any { it.isActive } ?: true
+
+    val showAboutSection: Boolean
+        get() = config?.footer?.aboutText?.isNotBlank() ?: true
+
+    val aboutText: String
+        get() = config?.footer?.aboutText ?: ""
+
+    val primaryColorHex: String
+        get() = config?.global?.primaryColor ?: "#F472B6"
+
+    val fontFamily: String
+        get() = "Plus Jakarta Sans"
+
+    val sectionsJson: String?
+        get() = null
+}
 
 @JsonClass(generateAdapter = true)
 data class SupabaseStaffProfileDto(
     @Json(name = "id") val id: String,
-    @Json(name = "name") val name: String,
-    @Json(name = "email") val email: String,
-    @Json(name = "phone") val phone: String,
-    @Json(name = "role") val role: String,
-    @Json(name = "permissions") val permissions: String,
+    @Json(name = "name") val name: String? = null,
+    @Json(name = "email") val email: String? = null,
+    @Json(name = "phone") val phone: String? = null,
+    @Json(name = "role") val role: String? = null,
+    @Json(name = "permissions") val permissions: Map<String, Boolean>? = null,
+    @Json(name = "active") val active: Boolean? = true,
     @Json(name = "is_active") val isActive: Boolean? = true,
     @Json(name = "last_active") val lastActive: String? = null
 )
@@ -233,9 +290,13 @@ data class SupabaseStaffProfileDto(
 @JsonClass(generateAdapter = true)
 data class SupabaseDashboardPushDeviceDto(
     @Json(name = "id") val id: String,
-    @Json(name = "device_name") val deviceName: String,
-    @Json(name = "push_token") val pushToken: String,
-    @Json(name = "last_active") val lastActive: String
+    @Json(name = "user_id") val userId: String? = null,
+    @Json(name = "token") val pushToken: String,
+    @Json(name = "platform") val platform: String = "android",
+    @Json(name = "active") val active: Boolean = true,
+    @Json(name = "created_at") val createdAt: String? = null,
+    @Json(name = "updated_at") val updatedAt: String? = null,
+    @Json(name = "last_seen_at") val lastSeenAt: String? = null
 )
 
 interface SupabaseService {
@@ -263,23 +324,28 @@ interface SupabaseService {
     ): Response<Unit>
 
 
-    // PRODUCTS (using catalog_products as specified!)
+    // PRODUCTS
+    // Read-only public catalog_products view
     @GET("rest/v1/catalog_products?select=*")
     suspend fun getProducts(): Response<List<SupabaseProductDto>>
 
-    @POST("rest/v1/catalog_products")
-    suspend fun upsertProduct(
-        @Body product: SupabaseProductDto,
+    // Admin products table for CRUD and dashboards
+    @GET("rest/v1/products?select=*")
+    suspend fun getAdminProducts(): Response<List<SupabaseProductAdminDto>>
+
+    @POST("rest/v1/products")
+    suspend fun upsertAdminProduct(
+        @Body product: SupabaseProductAdminDto,
         @Header("Prefer") prefer: String = "resolution=merge-duplicates"
     ): Response<Unit>
 
-    @DELETE("rest/v1/catalog_products")
-    suspend fun deleteProduct(@Query("id") filter: String): Response<Unit>
+    @DELETE("rest/v1/products")
+    suspend fun deleteAdminProduct(@Query("id") filter: String): Response<Unit>
 
-    @PATCH("rest/v1/catalog_products")
-    suspend fun patchProduct(
+    @PATCH("rest/v1/products")
+    suspend fun patchAdminProduct(
         @Query("id") filter: String,
-        @Body updates: Map<String, Boolean>
+        @Body updates: Map<String, @JvmSuppressWildcards Any>
     ): Response<Unit>
 
 
@@ -333,11 +399,11 @@ interface SupabaseService {
     suspend fun deleteOffer(@Query("id") filter: String): Response<Unit>
 
     @GET("rest/v1/banners?select=*")
-    suspend fun getBanners(): Response<List<SupabaseOfferDto>>
+    suspend fun getBanners(): Response<List<SupabaseBannerDto>>
 
     @POST("rest/v1/banners")
     suspend fun upsertBanner(
-        @Body banner: SupabaseOfferDto,
+        @Body banner: SupabaseBannerDto,
         @Header("Prefer") prefer: String = "resolution=merge-duplicates"
     ): Response<Unit>
 

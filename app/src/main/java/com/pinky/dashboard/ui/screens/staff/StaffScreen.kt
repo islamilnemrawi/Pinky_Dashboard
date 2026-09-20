@@ -135,9 +135,40 @@ fun StaffScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column {
-                                        Text(staff.name, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                        Text("${staff.email} • ${staff.phone}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    ) {
+                                        // Circular Avatar Placeholder
+                                        Box(
+                                            modifier = Modifier
+                                                .size(44.dp)
+                                                .clip(RoundedCornerShape(22.dp))
+                                                .background(PinkPrimary.copy(alpha = 0.15f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (staff.name.isNotBlank() && staff.name != "Staff Member") {
+                                                Text(
+                                                    text = staff.name.trim().take(1).uppercase(),
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 18.sp,
+                                                    color = PinkPrimary
+                                                )
+                                            } else {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.Person,
+                                                    contentDescription = null,
+                                                    tint = PinkPrimary,
+                                                    modifier = Modifier.size(24.dp)
+                                                )
+                                            }
+                                        }
+
+                                        Column {
+                                            Text(staff.name, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                            Text("${staff.email} • ${staff.phone}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
                                     }
 
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {

@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pinky.dashboard.data.remote.*
 import com.pinky.dashboard.domain.model.AdminUser
+import com.pinky.dashboard.domain.model.Permission
 import com.pinky.dashboard.ui.theme.PinkPrimary
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -113,77 +114,95 @@ fun HealthCheckScreen(
             val updatedResults = testResults.toMutableMap()
 
             // -----------------------------------------------------------------
-            // 1. AUTH & PERMISSIONS
+            // 1. SUPABASE URL VERIFICATION
             // -----------------------------------------------------------------
-            progressText = "جاري فحص جلسة المصادقة وصلاحيات الموظف..."
-            currentProgress = 0.08f
-            delay(400)
+            progressText = "جاري التحقق من عنوان سوبابيز المستهدف..."
+            currentProgress = 0.14f
+            delay(300)
 
-            if (!SupabaseClient.isSessionReady) {
-                progressText = "في انتظار تهيئة نظام المصادقة..."
-                val waitStart = System.currentTimeMillis()
-                while (!SupabaseClient.isSessionReady && (System.currentTimeMillis() - waitStart) < 10000L) {
-                    delay(100)
-                }
+            val urlLogs = mutableListOf<String>()
+            var urlError: DiagnosticError? = null
+            var urlStatus = TestStatus.FAILED
+
+            val activeUrl = SupabaseClient.supabaseUrl
+            urlLogs.add("العنوان المستخدم حالياً في التطبيق: $activeUrl")
+            if (activeUrl == "https://dmttevcncsxzbamazmmq.supabase.co") {
+                urlLogs.add("تم التحقق: عنوان السحابة يطابق العنوان المستهدف في مواصفات العقد الفعلي.")
+                urlStatus = TestStatus.WORKING
+            } else {
+                urlLogs.add("خطأ: عنوان السحابة المستخدم لا يطابق الرابط المحدد!")
+                urlError = DiagnosticError(
+                    operation = "checkUrl",
+                    tableOrRpc = "client_config",
+                    httpStatus = 0,
+                    postgresCode = "URL_MISMATCH",
+                    errorMessage = "رابط سوبابيز النشط ($activeUrl) لا يطابق العقد المطلوب.",
+                    likelyLayer = "Configuration"
+                )
             }
+
+            updatedResults["url_check"] = ModuleTestResult(
+                name = "url_check",
+                arabicName = "التحقق من عنوان السحابة (Supabase URL)",
+                dashboardToWebsite = urlStatus,
+                websiteToDashboard = urlStatus,
+                supabaseStatus = urlStatus,
+                logs = urlLogs,
+                error = urlError
+            )
+            testResults = updatedResults.toMap()
+
+            // -----------------------------------------------------------------
+            // 2. AUTHENTICATION & LOGIN STATUS
+            // -----------------------------------------------------------------
+            progressText = "جاري التحقق من حالة الدخول وجلسة المصادقة..."
+            currentProgress = 0.28f
+            delay(300)
 
             val authLogs = mutableListOf<String>()
             var authError: DiagnosticError? = null
             var authStatus = TestStatus.FAILED
 
-            if (SupabaseClient.accessToken != null) {
-                authLogs.add("تم العثور على رمز المصادقة بنجاح.")
-                authLogs.add("رقم المعرف الفريد للمستخدم: ${currentUser?.id ?: "غير معروف"}")
-                authLogs.add("البريد الإلكتروني المسجل: ${currentUser?.email ?: "غير مسجل"}")
-                authLogs.add("الرتبة المعترف بها: ${currentUser?.role?.arabicLabel ?: "مجهول"}")
-                authLogs.add("قائمة الصلاحيات الممنوحة: ${currentUser?.permissions?.map { it.name }?.joinToString(", ") ?: "لا توجد"}")
+            val isInit = SupabaseClient.isSessionReady
+            val tokenExists = SupabaseClient.accessToken != null
+            val isSandbox = SupabaseClient.accessToken == "sandbox_token"
 
-                // Call getStaffProfileByEmail to check profile table
-                try {
-                    val email = currentUser?.email ?: ""
-                    val response = SupabaseClient.service.getStaffProfileByEmail("eq.$email")
-                    if (response.isSuccessful) {
-                        authLogs.add("تم التحقق من وجود ملف الموظف في جدول staff_profiles.")
-                        authStatus = TestStatus.WORKING
-                    } else {
-                        val (pgCode, msg) = parseErrorBody(response)
-                        authLogs.add("خطأ أثناء جلب ملف الموظف: $msg")
-                        authError = DiagnosticError(
-                            operation = "getStaffProfileByEmail",
-                            tableOrRpc = "staff_profiles",
-                            httpStatus = response.code(),
-                            postgresCode = pgCode,
-                            errorMessage = msg,
-                            likelyLayer = "RLS / Database"
-                        )
-                        authStatus = TestStatus.PARTIAL
-                    }
-                } catch (e: Exception) {
-                    authLogs.add("فشل الاتصال بجدول الموظفين: ${e.message}")
+            authLogs.add("حالة تهيئة المصادقة (Auth Ready): $isInit")
+            if (tokenExists) {
+                if (isSandbox) {
+                    authLogs.add("تنبيه: أنت مسجل الدخول باستخدام وضع المطور التجريبي (Sandbox).")
+                    authLogs.add("لتشغيل فحوصات حقيقية على قاعدة البيانات والـ RLS، يرجى تسجيل الدخول أولاً بحساب موظف حقيقي (مثل ilnemrawy@gmail.com).")
                     authError = DiagnosticError(
-                        operation = "getStaffProfileByEmail",
-                        tableOrRpc = "staff_profiles",
-                        httpStatus = 0,
-                        postgresCode = "NET_ERR",
-                        errorMessage = e.message ?: "Network Exception",
-                        likelyLayer = "Network"
+                        operation = "checkAuth",
+                        tableOrRpc = "auth_session",
+                        httpStatus = 401,
+                        postgresCode = "SANDBOX_ACTIVE",
+                        errorMessage = "الجلسة الحالية تجريبية (Sandbox) وليست حقيقية.",
+                        likelyLayer = "Auth"
                     )
                     authStatus = TestStatus.PARTIAL
+                } else {
+                    authLogs.add("جلسة المصادقة الحقيقية نشطة ✓")
+                    authLogs.add("معرّف المستخدم (User UUID): ${SupabaseClient.userId ?: "مفقود"}")
+                    authLogs.add("البريد الإلكتروني للـ Owner/Staff: ${currentUser?.email ?: "مجهول"}")
+                    authLogs.add("الرتبة النشطة في التطبيق: ${currentUser?.role?.arabicLabel ?: "مجهول"}")
+                    authStatus = TestStatus.WORKING
                 }
             } else {
-                authLogs.add("لم يتم العثور على جلسة مصادقة نشطة. الرجاء تسجيل الدخول أولاً.")
+                authLogs.add("خطأ: لا توجد جلسة مصادقة نشطة. الرجاء الدخول أولاً.")
                 authError = DiagnosticError(
-                    operation = "checkSession",
-                    tableOrRpc = "auth",
+                    operation = "checkAuth",
+                    tableOrRpc = "auth_session",
                     httpStatus = 401,
-                    postgresCode = "AUTH_EXP",
-                    errorMessage = "لا توجد جلسة مصادقة للمستخدم.",
+                    postgresCode = "NO_SESSION",
+                    errorMessage = "لم يتم العثور على توكن مصادقة صالح. يرجى تسجيل الدخول من الشاشة الرئيسية للحصول على توكن جديد.",
                     likelyLayer = "Auth"
                 )
             }
-            updatedResults["auth"] = ModuleTestResult(
-                name = "auth",
-                arabicName = "المصادقة والصلاحيات",
+
+            updatedResults["auth_login"] = ModuleTestResult(
+                name = "auth_login",
+                arabicName = "جلسة المصادقة والدخول (Auth Login)",
                 dashboardToWebsite = authStatus,
                 websiteToDashboard = authStatus,
                 supabaseStatus = authStatus,
@@ -193,84 +212,213 @@ fun HealthCheckScreen(
             testResults = updatedResults.toMap()
 
             // -----------------------------------------------------------------
-            // 2. PRODUCTS
+            // 3. STAFF PROFILE & JSONB PERMISSIONS
             // -----------------------------------------------------------------
-            progressText = "جاري فحص جدول المنتجات (public.catalog_products)..."
-            currentProgress = 0.16f
-            delay(400)
-            val prodLogs = mutableListOf<String>()
-            var prodError: DiagnosticError? = null
-            var prodStatus = TestStatus.FAILED
+            progressText = "جاري قراءة ملف الموظف والتحقق من صلاحيات JSONB..."
+            currentProgress = 0.42f
+            delay(300)
 
-            try {
-                // Read products
-                val response = SupabaseClient.service.getProducts()
-                if (response.isSuccessful) {
-                    val list = response.body() ?: emptyList()
-                    prodLogs.add("تم قراءة جدول catalog_products بنجاح. عدد المنتجات الحالية: ${list.size}")
+            val staffLogs = mutableListOf<String>()
+            var staffError: DiagnosticError? = null
+            var staffStatus = TestStatus.FAILED
 
-                    // Write a test-safe temporary product
-                    val testId = "sys_test_p_${System.currentTimeMillis()}"
-                    val testProd = SupabaseProductDto(
-                        id = testId,
-                        name = "منتج فحص النظام المؤقت",
-                        description = "هذا منتج تجريبي يتم إنشاؤه وحذفه تلقائياً للتحقق من الاتصال وقوانين الحماية.",
-                        price = 999.0,
-                        isActive = false, // Not visible to users
-                        isFeatured = false
-                    )
-
-                    val insertResponse = SupabaseClient.service.upsertProduct(testProd)
-                    if (insertResponse.isSuccessful) {
-                        prodLogs.add("تم إدراج المنتج التجريبي بنجاح.")
-
-                        // Read back verification
-                        val readBack = SupabaseClient.service.getProducts()
-                        val found = readBack.body()?.any { it.id == testId } ?: false
-                        if (found) {
-                            prodLogs.add("تم التحقق وقراءة المنتج التجريبي المدخل بنجاح.")
+            if (tokenExists && !isSandbox) {
+                try {
+                    val email = currentUser?.email ?: ""
+                    val response = SupabaseClient.service.getStaffProfileByEmail("eq.$email")
+                    if (response.isSuccessful) {
+                        val profiles = response.body() ?: emptyList()
+                        if (profiles.isNotEmpty()) {
+                            val profile = profiles[0]
+                            staffLogs.add("تم العثور على ملف الموظف في جدول staff_profiles بنجاح.")
+                            staffLogs.add("الاسم المسجل: ${profile.name}")
+                            staffLogs.add("الرتبة في السيرفر: ${profile.role ?: "employee"}")
+                            staffLogs.add("الحالة في السيرفر (Active): ${profile.active ?: profile.isActive ?: true}")
+                            
+                            // Log raw JSONB permissions map
+                            val rawPermMap = profile.permissions
+                            staffLogs.add("خريطة الصلاحيات المسترجعة (Raw JSONB Map): ${rawPermMap ?: "{}"}")
+                            
+                            // Map it to Kotlin Set
+                            val parsedSet = rawPermMap?.filterValues { it }?.keys?.mapNotNull {
+                                try { com.pinky.dashboard.domain.model.Permission.valueOf(it) } catch (e: Exception) { null }
+                            }?.toSet() ?: emptySet()
+                            
+                            staffLogs.add("تم فك تشفير وتحويل الصلاحيات بنجاح إلى Kotlin Set (${parsedSet.size} صلاحيات):")
+                            staffLogs.add(parsedSet.joinToString(", ") { it.name })
+                            
+                            staffStatus = TestStatus.WORKING
                         } else {
-                            prodLogs.add("فشل التحقق: لم يتم العثور على المنتج التجريبي في قائمة القراءة.")
-                        }
-
-                        // Revert / Delete
-                        val deleteResponse = SupabaseClient.service.deleteProduct("eq.$testId")
-                        if (deleteResponse.isSuccessful) {
-                            prodLogs.add("تمت إزالة المنتج التجريبي بنجاح والمحافظة على نظافة البيانات.")
-                            prodStatus = TestStatus.WORKING
-                        } else {
-                            val (pgCode, msg) = parseErrorBody(deleteResponse)
-                            prodLogs.add("تحذير: فشل حذف المنتج التجريبي: $msg")
-                            prodStatus = TestStatus.PARTIAL
+                            staffLogs.add("خطأ: لم يتم العثور على ملف موظف مطابق للبريد الإلكتروني $email في قاعدة البيانات.")
+                            staffError = DiagnosticError(
+                                operation = "getStaffProfileByEmail",
+                                tableOrRpc = "staff_profiles",
+                                httpStatus = 200,
+                                postgresCode = "NO_PROFILE_FOUND",
+                                errorMessage = "الملف الشخصي غير منشأ لهذا البريد في جدول الموظفين.",
+                                likelyLayer = "Database"
+                            )
                         }
                     } else {
-                        val (pgCode, msg) = parseErrorBody(insertResponse)
-                        prodLogs.add("فشل إدراج منتج تجريبي: $msg")
-                        prodError = DiagnosticError(
-                            operation = "upsertProduct",
-                            tableOrRpc = "catalog_products",
-                            httpStatus = insertResponse.code(),
+                        val (pgCode, msg) = parseErrorBody(response)
+                        staffLogs.add("خطأ في قراءة ملف الموظف: $msg")
+                        staffError = DiagnosticError(
+                            operation = "getStaffProfileByEmail",
+                            tableOrRpc = "staff_profiles",
+                            httpStatus = response.code(),
                             postgresCode = pgCode,
                             errorMessage = msg,
                             likelyLayer = "RLS"
                         )
-                        prodStatus = TestStatus.PARTIAL
                     }
+                } catch (e: Exception) {
+                    staffLogs.add("فشل الاتصال البرمجي بالجدول: ${e.message}")
+                    staffError = DiagnosticError(
+                        operation = "getStaffProfileByEmail",
+                        tableOrRpc = "staff_profiles",
+                        httpStatus = 0,
+                        postgresCode = "NET_ERR",
+                        errorMessage = e.message ?: "Network Exception",
+                        likelyLayer = "Network"
+                    )
+                }
+            } else {
+                staffLogs.add("تخطى: هذا الاختبار يتطلب جلسة مصادقة حقيقية نشطة.")
+                staffStatus = TestStatus.NOT_TESTABLE
+            }
+
+            updatedResults["staff_profile_permissions"] = ModuleTestResult(
+                name = "staff_profile_permissions",
+                arabicName = "ملف الموظف وصلاحيات الـ JSONB",
+                dashboardToWebsite = staffStatus,
+                websiteToDashboard = staffStatus,
+                supabaseStatus = staffStatus,
+                logs = staffLogs,
+                error = staffError
+            )
+            testResults = updatedResults.toMap()
+
+            // -----------------------------------------------------------------
+            // 4. RLS TABLE READS (12 CONTRACT TABLES)
+            // -----------------------------------------------------------------
+            progressText = "جاري فحص صلاحيات القراءة الآمنة لجداول الـ RLS الاثني عشر..."
+            currentProgress = 0.56f
+            delay(300)
+
+            val rlsLogs = mutableListOf<String>()
+            var rlsError: DiagnosticError? = null
+            var rlsStatus = TestStatus.FAILED
+
+            if (tokenExists && !isSandbox) {
+                var succeededTables = 0
+                var restrictedTables = 0
+                var failedTables = 0
+
+                val tablesToTest = listOf(
+                    "orders" to suspend { SupabaseClient.service.getOrders() },
+                    "products" to suspend { SupabaseClient.service.getAdminProducts() },
+                    "categories" to suspend { SupabaseClient.service.getCategories() },
+                    "offers" to suspend { SupabaseClient.service.getOffers() },
+                    "banners" to suspend { SupabaseClient.service.getBanners() },
+                    "coupons" to suspend { SupabaseClient.service.getCoupons() },
+                    "shipping_governorates" to suspend { SupabaseClient.service.getGovernorates() },
+                    "shipping_centers" to suspend { SupabaseClient.service.getShippingCenters() },
+                    "prime_subscriptions" to suspend { SupabaseClient.service.getPrimeSubscriptions() },
+                    "site_customizations" to suspend { SupabaseClient.service.getSiteCustomizations() },
+                    "store_settings" to suspend { SupabaseClient.service.getStoreSettings() },
+                    "staff_profiles" to suspend { SupabaseClient.service.getStaffProfiles() }
+                )
+
+                rlsLogs.add("جاري فحص استعلام قراءة الجداول الحقيقية:")
+                for ((tableName, queryFunc) in tablesToTest) {
+                    try {
+                        val response = queryFunc()
+                        if (response.isSuccessful) {
+                            rlsLogs.add("- جدول $tableName: قراءة ناجحة ✓")
+                            succeededTables++
+                        } else {
+                            val errorStr = response.errorBody()?.string() ?: ""
+                            if (response.code() == 403 || errorStr.contains("42501")) {
+                                rlsLogs.add("- جدول $tableName: حماية الـ RLS تفرض قيوداً لهذا الحساب (HTTP 403/42501) ✓")
+                                restrictedTables++
+                            } else {
+                                rlsLogs.add("- جدول $tableName: فشل الاستعلام (${response.code()}): $errorStr ✗")
+                                failedTables++
+                            }
+                        }
+                    } catch (e: Exception) {
+                        rlsLogs.add("- جدول $tableName: فشل الاتصال (${e.message}) ✗")
+                        failedTables++
+                    }
+                }
+
+                rlsLogs.add("ملخص الفحص: الجداول المقروءة بنجاح: $succeededTables، الجداول الخاضعة لقيود RLS: $restrictedTables، جداول فاشلة: $failedTables")
+                
+                rlsStatus = when {
+                    failedTables > 0 -> TestStatus.FAILED
+                    restrictedTables > 0 -> TestStatus.PARTIAL
+                    else -> TestStatus.WORKING
+                }
+                
+                if (failedTables > 0) {
+                    rlsError = DiagnosticError(
+                        operation = "readTables",
+                        tableOrRpc = "multiple_tables",
+                        httpStatus = 500,
+                        postgresCode = "READ_FAILED",
+                        errorMessage = "هناك جداول لم يتم الوصول إليها بنجاح بسبب مشاكل اتصال أو هيكلية.",
+                        likelyLayer = "Database / Network"
+                    )
+                }
+            } else {
+                rlsLogs.add("تخطى: يتطلب جلسة مصادقة حقيقية لإجراء استعلامات RLS.")
+                rlsStatus = TestStatus.NOT_TESTABLE
+            }
+
+            updatedResults["rls_reads"] = ModuleTestResult(
+                name = "rls_reads",
+                arabicName = "صلاحيات قراءة جداول الـ RLS",
+                dashboardToWebsite = rlsStatus,
+                websiteToDashboard = rlsStatus,
+                supabaseStatus = rlsStatus,
+                logs = rlsLogs,
+                error = rlsError
+            )
+            testResults = updatedResults.toMap()
+
+            // -----------------------------------------------------------------
+            // 5. PUBLIC VIEW: catalog_products_read
+            // -----------------------------------------------------------------
+            progressText = "جاري التحقق من القراءة العامة لـ catalog_products..."
+            currentProgress = 0.70f
+            delay(300)
+
+            val catalogLogs = mutableListOf<String>()
+            var catalogError: DiagnosticError? = null
+            var catalogStatus = TestStatus.FAILED
+
+            try {
+                val response = SupabaseClient.service.getProducts()
+                if (response.isSuccessful) {
+                    val list = response.body() ?: emptyList()
+                    catalogLogs.add("تم الاتصال وقراءة الـ Public View [catalog_products] بنجاح.")
+                    catalogLogs.add("عدد المنتجات المتاحة للعرض العام: ${list.size} منتجات.")
+                    catalogStatus = TestStatus.WORKING
                 } else {
                     val (pgCode, msg) = parseErrorBody(response)
-                    prodLogs.add("فشل قراءة جدول المنتجات: $msg")
-                    prodError = DiagnosticError(
+                    catalogLogs.add("فشل قراءة الـ View العام: $msg")
+                    catalogError = DiagnosticError(
                         operation = "getProducts",
                         tableOrRpc = "catalog_products",
                         httpStatus = response.code(),
                         postgresCode = pgCode,
                         errorMessage = msg,
-                        likelyLayer = "RLS"
+                        likelyLayer = "Database View"
                     )
                 }
             } catch (e: Exception) {
-                prodLogs.add("فشل الاتصال بجدول المنتجات: ${e.message}")
-                prodError = DiagnosticError(
+                catalogLogs.add("فشل الاتصال بـ catalog_products: ${e.message}")
+                catalogError = DiagnosticError(
                     operation = "getProducts",
                     tableOrRpc = "catalog_products",
                     httpStatus = 0,
@@ -279,843 +427,89 @@ fun HealthCheckScreen(
                     likelyLayer = "Network"
                 )
             }
-            updatedResults["products"] = ModuleTestResult(
-                name = "products",
-                arabicName = "المنتجات (catalog_products)",
-                dashboardToWebsite = prodStatus,
-                websiteToDashboard = prodStatus,
-                supabaseStatus = prodStatus,
-                logs = prodLogs,
-                error = prodError
+
+            updatedResults["catalog_products_read"] = ModuleTestResult(
+                name = "catalog_products_read",
+                arabicName = "القراءة العامة للمتجر (catalog_products)",
+                dashboardToWebsite = catalogStatus,
+                websiteToDashboard = catalogStatus,
+                supabaseStatus = catalogStatus,
+                logs = catalogLogs,
+                error = catalogError
             )
             testResults = updatedResults.toMap()
 
             // -----------------------------------------------------------------
-            // 3. CATEGORIES
+            // 6. PUSH DEVICE DTO VALIDATION
             // -----------------------------------------------------------------
-            progressText = "جاري فحص جدول الأقسام (public.categories)..."
-            currentProgress = 0.25f
-            delay(400)
-            val catLogs = mutableListOf<String>()
-            var catError: DiagnosticError? = null
-            var catStatus = TestStatus.FAILED
+            progressText = "جاري اختبار هيكل وتوافق جهاز الإشعارات..."
+            currentProgress = 0.84f
+            delay(300)
 
-            try {
-                val response = SupabaseClient.service.getCategories()
-                if (response.isSuccessful) {
-                    val list = response.body() ?: emptyList()
-                    catLogs.add("تم قراءة جدول categories بنجاح. عدد الأقسام: ${list.size}")
-
-                    // Try to insert a test category
-                    val testId = "sys_test_c_${System.currentTimeMillis()}"
-                    val testCat = SupabaseCategoryDto(
-                        id = testId,
-                        name = "قسم فحص مؤقت",
-                        active = false,
-                        sortOrder = 999
-                    )
-                    val insertResponse = SupabaseClient.service.upsertCategory(testCat)
-                    if (insertResponse.isSuccessful) {
-                        catLogs.add("تم إدراج القسم التجريبي بنجاح.")
-
-                        // Read back
-                        val readBack = SupabaseClient.service.getCategories()
-                        val found = readBack.body()?.any { it.id == testId } ?: false
-                        if (found) {
-                            catLogs.add("تم التحقق وقراءة القسم التجريبي بنجاح.")
-                        }
-
-                        // Delete
-                        val deleteResponse = SupabaseClient.service.deleteCategory("eq.$testId")
-                        if (deleteResponse.isSuccessful) {
-                            catLogs.add("تمت إزالة القسم التجريبي بنجاح.")
-                            catStatus = TestStatus.WORKING
-                        } else {
-                            catLogs.add("تحذير: فشل حذف القسم التجريبي.")
-                            catStatus = TestStatus.PARTIAL
-                        }
-                    } else {
-                        val (pgCode, msg) = parseErrorBody(insertResponse)
-                        catLogs.add("فشل إدراج قسم تجريبي: $msg")
-                        catError = DiagnosticError(
-                            operation = "upsertCategory",
-                            tableOrRpc = "categories",
-                            httpStatus = insertResponse.code(),
-                            postgresCode = pgCode,
-                            errorMessage = msg,
-                            likelyLayer = "RLS"
-                        )
-                        catStatus = TestStatus.PARTIAL
-                    }
-                } else {
-                    val (pgCode, msg) = parseErrorBody(response)
-                    catLogs.add("فشل قراءة جدول الأقسام: $msg")
-                    catError = DiagnosticError(
-                        operation = "getCategories",
-                        tableOrRpc = "categories",
-                        httpStatus = response.code(),
-                        postgresCode = pgCode,
-                        errorMessage = msg,
-                        likelyLayer = "RLS"
-                    )
-                }
-            } catch (e: Exception) {
-                catLogs.add("فشل الاتصال بجدول الأقسام: ${e.message}")
-                catError = DiagnosticError(
-                    operation = "getCategories",
-                    tableOrRpc = "categories",
-                    httpStatus = 0,
-                    postgresCode = "NET_ERR",
-                    errorMessage = e.message ?: "Network Exception",
-                    likelyLayer = "Network"
-                )
-            }
-            updatedResults["categories"] = ModuleTestResult(
-                name = "categories",
-                arabicName = "الأقسام (categories)",
-                dashboardToWebsite = catStatus,
-                websiteToDashboard = catStatus,
-                supabaseStatus = catStatus,
-                logs = catLogs,
-                error = catError
-            )
-            testResults = updatedResults.toMap()
-
-            // -----------------------------------------------------------------
-            // 4. OFFERS / BANNERS
-            // -----------------------------------------------------------------
-            progressText = "جاري فحص العروض والبنرات (public.offers / banners)..."
-            currentProgress = 0.33f
-            delay(400)
-            val bannerLogs = mutableListOf<String>()
-            var bannerError: DiagnosticError? = null
-            var bannerStatus = TestStatus.FAILED
-
-            try {
-                val response = SupabaseClient.service.getBanners()
-                if (response.isSuccessful) {
-                    val list = response.body() ?: emptyList()
-                    bannerLogs.add("تم قراءة جدول banners بنجاح. عدد البنرات: ${list.size}")
-
-                    val testId = "sys_test_b_${System.currentTimeMillis()}"
-                    val testBanner = SupabaseOfferDto(
-                        id = testId,
-                        title = "بنر فحص النظام",
-                        description = "محتوى مؤقت لإجراء الاختبار الآمن.",
-                        isActive = false
-                    )
-                    val insertResponse = SupabaseClient.service.upsertBanner(testBanner)
-                    if (insertResponse.isSuccessful) {
-                        bannerLogs.add("تم إدراج البنر التجريبي بنجاح.")
-
-                        val deleteResponse = SupabaseClient.service.deleteBanner("eq.$testId")
-                        if (deleteResponse.isSuccessful) {
-                            bannerLogs.add("تمت إزالة البنر التجريبي بنجاح.")
-                            bannerStatus = TestStatus.WORKING
-                        } else {
-                            bannerStatus = TestStatus.PARTIAL
-                        }
-                    } else {
-                        val (pgCode, msg) = parseErrorBody(insertResponse)
-                        bannerLogs.add("فشل إدراج البنر التجريبي: $msg")
-                        bannerError = DiagnosticError(
-                            operation = "upsertBanner",
-                            tableOrRpc = "banners",
-                            httpStatus = insertResponse.code(),
-                            postgresCode = pgCode,
-                            errorMessage = msg,
-                            likelyLayer = "RLS"
-                        )
-                        bannerStatus = TestStatus.PARTIAL
-                    }
-                } else {
-                    val (pgCode, msg) = parseErrorBody(response)
-                    bannerLogs.add("فشل قراءة جدول البنرات: $msg")
-                    bannerError = DiagnosticError(
-                        operation = "getBanners",
-                        tableOrRpc = "banners",
-                        httpStatus = response.code(),
-                        postgresCode = pgCode,
-                        errorMessage = msg,
-                        likelyLayer = "RLS"
-                    )
-                }
-            } catch (e: Exception) {
-                bannerLogs.add("فشل الاتصال بجدول البنرات: ${e.message}")
-                bannerError = DiagnosticError(
-                    operation = "getBanners",
-                    tableOrRpc = "banners",
-                    httpStatus = 0,
-                    postgresCode = "NET_ERR",
-                    errorMessage = e.message ?: "Network Exception",
-                    likelyLayer = "Network"
-                )
-            }
-            updatedResults["offers_coupons"] = ModuleTestResult(
-                name = "offers_coupons",
-                arabicName = "البنرات والعروض (banners)",
-                dashboardToWebsite = bannerStatus,
-                websiteToDashboard = bannerStatus,
-                supabaseStatus = bannerStatus,
-                logs = bannerLogs,
-                error = bannerError
-            )
-            testResults = updatedResults.toMap()
-
-            // -----------------------------------------------------------------
-            // 5. SITE CUSTOMIZATION
-            // -----------------------------------------------------------------
-            progressText = "جاري فحص تخصيص الموقع الويب (public.site_customizations)..."
-            currentProgress = 0.41f
-            delay(400)
-            val customLogs = mutableListOf<String>()
-            var customError: DiagnosticError? = null
-            var customStatus = TestStatus.FAILED
-
-            try {
-                val response = SupabaseClient.service.getSiteCustomizations()
-                if (response.isSuccessful) {
-                    val list = response.body() ?: emptyList()
-                    customLogs.add("تم قراءة التخصيصات الحالية. العدد: ${list.size}")
-
-                    if (list.isNotEmpty()) {
-                        val original = list[0]
-                        customLogs.add("تم العثور على تخصيص نشط: ${original.heroTitle}")
-
-                        // Perform a safe temporary test
-                        val tempVal = "فحص تلقائي للنظام - ${System.currentTimeMillis()}"
-                        val tempCustom = original.copy(announcementBarText = tempVal)
-
-                        val updateResponse = SupabaseClient.service.upsertSiteCustomizations(tempCustom)
-                        if (updateResponse.isSuccessful) {
-                            customLogs.add("تم إرسال التحديث التجريبي ومطابقته بنجاح.")
-
-                            // Read back
-                            val rb = SupabaseClient.service.getSiteCustomizations()
-                            val updatedItem = rb.body()?.firstOrNull { it.id == original.id }
-                            if (updatedItem?.announcementBarText == tempVal) {
-                                customLogs.add("تم التحقق بنجاح من قراءة النص المؤقت.")
-                            }
-
-                            // Restore original
-                            val restoreResponse = SupabaseClient.service.upsertSiteCustomizations(original)
-                            if (restoreResponse.isSuccessful) {
-                                customLogs.add("تمت استعادة تفاصيل التخصيص الأصلية بنجاح.")
-                                customStatus = TestStatus.WORKING
-                            } else {
-                                customLogs.add("خطأ أثناء استعادة التخصيص الأصلي.")
-                                customStatus = TestStatus.PARTIAL
-                            }
-                        } else {
-                            val (pgCode, msg) = parseErrorBody(updateResponse)
-                            customLogs.add("فشل تحديث التخصيص مؤقتاً: $msg")
-                            customError = DiagnosticError(
-                                operation = "upsertSiteCustomizations",
-                                tableOrRpc = "site_customizations",
-                                httpStatus = updateResponse.code(),
-                                postgresCode = pgCode,
-                                errorMessage = msg,
-                                likelyLayer = "RLS"
-                            )
-                            customStatus = TestStatus.PARTIAL
-                        }
-                    } else {
-                        customLogs.add("لا توجد تخصيصات حالياً في الجدول لرفع التحديثات عليها.")
-                        customStatus = TestStatus.PARTIAL
-                    }
-                } else {
-                    val (pgCode, msg) = parseErrorBody(response)
-                    customLogs.add("فشل قراءة جدول التخصيصات: $msg")
-                    customError = DiagnosticError(
-                        operation = "getSiteCustomizations",
-                        tableOrRpc = "site_customizations",
-                        httpStatus = response.code(),
-                        postgresCode = pgCode,
-                        errorMessage = msg,
-                        likelyLayer = "RLS"
-                    )
-                }
-            } catch (e: Exception) {
-                customLogs.add("فشل الاتصال بجدول التخصيصات: ${e.message}")
-                customError = DiagnosticError(
-                    operation = "getSiteCustomizations",
-                    tableOrRpc = "site_customizations",
-                    httpStatus = 0,
-                    postgresCode = "NET_ERR",
-                    errorMessage = e.message ?: "Network Exception",
-                    likelyLayer = "Network"
-                )
-            }
-            updatedResults["website_editor"] = ModuleTestResult(
-                name = "website_editor",
-                arabicName = "تخصيص الموقع (site_customizations)",
-                dashboardToWebsite = customStatus,
-                websiteToDashboard = customStatus,
-                supabaseStatus = customStatus,
-                logs = customLogs,
-                error = customError
-            )
-            testResults = updatedResults.toMap()
-
-            // -----------------------------------------------------------------
-            // 6. ORDERS (WEBSITE -> DASHBOARD) & JSON ITEMS
-            // -----------------------------------------------------------------
-            progressText = "جاري فحص تدفق الطلبات وهيكلية البيانات (public.orders)..."
-            currentProgress = 0.5f
-            delay(400)
-            val orderLogs = mutableListOf<String>()
-            var orderError: DiagnosticError? = null
-            var orderStatus = TestStatus.FAILED
-
-            try {
-                val response = SupabaseClient.service.getOrders()
-                if (response.isSuccessful) {
-                    val list = response.body() ?: emptyList()
-                    orderLogs.add("تم قراءة جدول الطلبات بنجاح. عدد الطلبات: ${list.size}")
-
-                    // Insert a safe temporary test order
-                    val testId = "sys_test_o_${System.currentTimeMillis()}"
-                    val testOrder = SupabaseOrderDto(
-                        id = testId,
-                        orderNumber = "SYS-TEST-999",
-                        customerName = "عميل فحص النظام",
-                        phone = "01000000000",
-                        address = "شارع الفحص الفني",
-                        governorate = "القاهرة",
-                        center = "مصر الجديدة",
-                        subtotal = 100.0,
-                        shippingCost = 20.0,
-                        total = 120.0,
-                        paymentMethod = "COD",
-                        status = "PENDING"
-                    )
-
-                    val insertResponse = SupabaseClient.service.upsertOrder(testOrder)
-                    if (insertResponse.isSuccessful) {
-                        orderLogs.add("تم محاكاة Checkout من الموقع وإدراج الطلب التجريبي بنجاح.")
-
-                        // Read back check
-                        val readBack = SupabaseClient.service.getOrders()
-                        val found = readBack.body()?.firstOrNull { it.id == testId }
-                        if (found != null) {
-                            orderLogs.add("تمت قراءة الطلب من لوحة التحكم بنجاح ومطابقة تفاصيل العميل.")
-                        }
-
-                        // Revert via DELETE
-                        val deleteResponse = SupabaseClient.service.deleteOrder("eq.$testId")
-                        if (deleteResponse.isSuccessful) {
-                            orderLogs.add("تمت تصفية وإزالة الطلب التجريبي بنجاح من قاعدة البيانات.")
-                            orderStatus = TestStatus.WORKING
-                        } else {
-                            val (pgCode, msg) = parseErrorBody(deleteResponse)
-                            orderLogs.add("تحذير: فشل إزالة الطلب التجريبي: $msg")
-                            orderStatus = TestStatus.PARTIAL
-                        }
-                    } else {
-                        val (pgCode, msg) = parseErrorBody(insertResponse)
-                        orderLogs.add("فشل إدراج طلب تجريبي: $msg")
-                        orderError = DiagnosticError(
-                            operation = "upsertOrder",
-                            tableOrRpc = "orders",
-                            httpStatus = insertResponse.code(),
-                            postgresCode = pgCode,
-                            errorMessage = msg,
-                            likelyLayer = "RLS"
-                        )
-                        orderStatus = TestStatus.PARTIAL
-                    }
-                } else {
-                    val (pgCode, msg) = parseErrorBody(response)
-                    orderLogs.add("فشل قراءة جدول الطلبات: $msg")
-                    orderError = DiagnosticError(
-                        operation = "getOrders",
-                        tableOrRpc = "orders",
-                        httpStatus = response.code(),
-                        postgresCode = pgCode,
-                        errorMessage = msg,
-                        likelyLayer = "RLS"
-                    )
-                }
-            } catch (e: Exception) {
-                orderLogs.add("فشل الاتصال بجدول الطلبات: ${e.message}")
-                orderError = DiagnosticError(
-                    operation = "getOrders",
-                    tableOrRpc = "orders",
-                    httpStatus = 0,
-                    postgresCode = "NET_ERR",
-                    errorMessage = e.message ?: "Network Exception",
-                    likelyLayer = "Network"
-                )
-            }
-            updatedResults["orders"] = ModuleTestResult(
-                name = "orders",
-                arabicName = "تدفق الطلبات (orders)",
-                dashboardToWebsite = orderStatus,
-                websiteToDashboard = orderStatus,
-                supabaseStatus = orderStatus,
-                logs = orderLogs,
-                error = orderError
-            )
-            testResults = updatedResults.toMap()
-
-            // -----------------------------------------------------------------
-            // 7. ORDERS (DASHBOARD -> WEBSITE UPDATE)
-            // -----------------------------------------------------------------
-            progressText = "جاري فحص تحديث حالات الطلبات (Dashboard -> Website)..."
-            currentProgress = 0.58f
-            delay(400)
-            val orderUpLogs = mutableListOf<String>()
-            var orderUpError: DiagnosticError? = null
-            var orderUpStatus = TestStatus.FAILED
-
-            try {
-                val listResponse = SupabaseClient.service.getOrders()
-                if (listResponse.isSuccessful && listResponse.body()?.isNotEmpty() == true) {
-                    val targetOrder = listResponse.body()!!.first()
-                    val originalStatus = targetOrder.status ?: "PENDING"
-                    orderUpLogs.add("تم العثور على طلب لتجربة التحديث: ${targetOrder.orderNumber}")
-
-                    // Patch to DELIVERED
-                    val updateResponse = SupabaseClient.service.updateOrderStatus("eq.${targetOrder.id}", mapOf("status" to "DELIVERED"))
-                    if (updateResponse.isSuccessful) {
-                        orderUpLogs.add("تم تغيير حالة الطلب إلى DELIVERED بنجاح.")
-
-                        // Read back
-                        val rb = SupabaseClient.service.getOrders()
-                        val updated = rb.body()?.firstOrNull { it.id == targetOrder.id }
-                        if (updated?.status == "DELIVERED") {
-                            orderUpLogs.add("تم تأكيد وصول الحالة الجديدة.")
-                        }
-
-                        // Restore original status
-                        SupabaseClient.service.updateOrderStatus("eq.${targetOrder.id}", mapOf("status" to originalStatus))
-                        orderUpLogs.add("تمت استعادة حالة الطلب الأصلية ($originalStatus) بنجاح.")
-                        orderUpStatus = TestStatus.WORKING
-                    } else {
-                        val (pgCode, msg) = parseErrorBody(updateResponse)
-                        orderUpLogs.add("فشل تحديث الحالة: $msg")
-                        orderUpError = DiagnosticError(
-                            operation = "updateOrderStatus",
-                            tableOrRpc = "orders",
-                            httpStatus = updateResponse.code(),
-                            postgresCode = pgCode,
-                            errorMessage = msg,
-                            likelyLayer = "RLS"
-                        )
-                        orderUpStatus = TestStatus.PARTIAL
-                    }
-                } else {
-                    orderUpLogs.add("لا توجد طلبات متوفرة في الجدول لتعديلها.")
-                    orderUpStatus = TestStatus.PARTIAL
-                }
-            } catch (e: Exception) {
-                orderUpLogs.add("فشل تحديث حالة الطلبات: ${e.message}")
-                orderUpError = DiagnosticError(
-                    operation = "updateOrderStatus",
-                    tableOrRpc = "orders",
-                    httpStatus = 0,
-                    postgresCode = "NET_ERR",
-                    errorMessage = e.message ?: "Network Exception",
-                    likelyLayer = "Network"
-                )
-            }
-            // Add a mock or update visual representation for order mapping
-            updatedResults["orders_dashboard_to_website"] = ModuleTestResult(
-                name = "orders_dashboard_to_website",
-                arabicName = "تحديث حالات الطلبات",
-                dashboardToWebsite = orderUpStatus,
-                websiteToDashboard = orderUpStatus,
-                supabaseStatus = orderUpStatus,
-                logs = orderUpLogs,
-                error = orderUpError
-            )
-            testResults = updatedResults.toMap()
-
-            // -----------------------------------------------------------------
-            // 8. PRIME
-            // -----------------------------------------------------------------
-            progressText = "جاري فحص باقات واشتراكات Pinky Prime..."
-            currentProgress = 0.66f
-            delay(400)
-            val primeLogs = mutableListOf<String>()
-            var primeError: DiagnosticError? = null
-            var primeStatus = TestStatus.FAILED
-
-            try {
-                val response = SupabaseClient.service.getPrimeSubscriptions()
-                if (response.isSuccessful) {
-                    val list = response.body() ?: emptyList()
-                    primeLogs.add("تم الاتصال بنجاح بجدول prime_subscriptions. عدد المشتركين: ${list.size}")
-
-                    // Create test prime sub
-                    val testId = "sys_test_prime_${System.currentTimeMillis()}"
-                    val testSub = SupabasePrimeSubscriptionDto(
-                        id = testId,
-                        customerName = "مشترك تجريبي للنظام",
-                        phone = "01111111111",
-                        startDate = "2026-09-17",
-                        expiryDate = "2026-10-17",
-                        status = "ACTIVE"
-                    )
-
-                    val insertResponse = SupabaseClient.service.upsertPrimeSubscription(testSub)
-                    if (insertResponse.isSuccessful) {
-                        primeLogs.add("تم تسجيل اشتراك برايم تجريبي بنجاح.")
-
-                        // Read back
-                        val rb = SupabaseClient.service.getPrimeSubscriptions()
-                        val found = rb.body()?.any { it.id == testId } ?: false
-                        if (found) {
-                            primeLogs.add("تم التحقق وقراءة اشتراك برايم من لوحة التحكم بنجاح.")
-                        }
-
-                        // Revert via DELETE
-                        val deleteResponse = SupabaseClient.service.deletePrimeSubscription("eq.$testId")
-                        if (deleteResponse.isSuccessful) {
-                            primeLogs.add("تمت تصفية اشتراك برايم التجريبي بنجاح.")
-                            primeStatus = TestStatus.WORKING
-                        } else {
-                            primeStatus = TestStatus.PARTIAL
-                        }
-                    } else {
-                        val (pgCode, msg) = parseErrorBody(insertResponse)
-                        primeLogs.add("فشل تسجيل اشتراك برايم تجريبي: $msg")
-                        primeError = DiagnosticError(
-                            operation = "upsertPrimeSubscription",
-                            tableOrRpc = "prime_subscriptions",
-                            httpStatus = insertResponse.code(),
-                            postgresCode = pgCode,
-                            errorMessage = msg,
-                            likelyLayer = "RLS"
-                        )
-                        primeStatus = TestStatus.PARTIAL
-                    }
-                } else {
-                    val (pgCode, msg) = parseErrorBody(response)
-                    primeLogs.add("فشل قراءة جدول الاشتراكات: $msg")
-                    primeError = DiagnosticError(
-                        operation = "getPrimeSubscriptions",
-                        tableOrRpc = "prime_subscriptions",
-                        httpStatus = response.code(),
-                        postgresCode = pgCode,
-                        errorMessage = msg,
-                        likelyLayer = "RLS"
-                    )
-                }
-            } catch (e: Exception) {
-                primeLogs.add("فشل الاتصال بجدول باقات برايم: ${e.message}")
-                primeError = DiagnosticError(
-                    operation = "getPrimeSubscriptions",
-                    tableOrRpc = "prime_subscriptions",
-                    httpStatus = 0,
-                    postgresCode = "NET_ERR",
-                    errorMessage = e.message ?: "Network Exception",
-                    likelyLayer = "Network"
-                )
-            }
-            updatedResults["prime"] = ModuleTestResult(
-                name = "prime",
-                arabicName = "باقات برايم (prime_subscriptions)",
-                dashboardToWebsite = primeStatus,
-                websiteToDashboard = primeStatus,
-                supabaseStatus = primeStatus,
-                logs = primeLogs,
-                error = primeError
-            )
-            testResults = updatedResults.toMap()
-
-            // -----------------------------------------------------------------
-            // 9. SHIPPING
-            // -----------------------------------------------------------------
-            progressText = "جاري التحقق من تسعير المحافظات والمراكز..."
-            currentProgress = 0.75f
-            delay(400)
-            val shipLogs = mutableListOf<String>()
-            var shipError: DiagnosticError? = null
-            var shipStatus = TestStatus.FAILED
-
-            try {
-                val govResponse = SupabaseClient.service.getGovernorates()
-                val centersResponse = SupabaseClient.service.getShippingCenters()
-
-                if (govResponse.isSuccessful && centersResponse.isSuccessful) {
-                    val govs = govResponse.body() ?: emptyList()
-                    val centers = centersResponse.body() ?: emptyList()
-
-                    shipLogs.add("تم الاتصال بجدول المحافظات بنجاح. العدد: ${govs.size}")
-                    shipLogs.add("تم الاتصال بجدول مراكز التوصيل بنجاح. العدد: ${centers.size}")
-                    shipStatus = TestStatus.WORKING
-                } else {
-                    val (pgCode, msg) = if (!govResponse.isSuccessful) parseErrorBody(govResponse) else parseErrorBody(centersResponse)
-                    shipLogs.add("فشل قراءة بيانات الشحن والتوصيل: $msg")
-                    shipError = DiagnosticError(
-                        operation = "getGovernorates / getShippingCenters",
-                        tableOrRpc = "shipping_governorates",
-                        httpStatus = if (!govResponse.isSuccessful) govResponse.code() else centersResponse.code(),
-                        postgresCode = pgCode,
-                        errorMessage = msg,
-                        likelyLayer = "RLS"
-                    )
-                }
-            } catch (e: Exception) {
-                shipLogs.add("فشل الاتصال بجدول الشحن: ${e.message}")
-                shipError = DiagnosticError(
-                    operation = "getGovernorates",
-                    tableOrRpc = "shipping_governorates",
-                    httpStatus = 0,
-                    postgresCode = "NET_ERR",
-                    errorMessage = e.message ?: "Network Exception",
-                    likelyLayer = "Network"
-                )
-            }
-            updatedResults["shipping"] = ModuleTestResult(
-                name = "shipping",
-                arabicName = "الشحن والأسعار (shipping_governorates)",
-                dashboardToWebsite = shipStatus,
-                websiteToDashboard = shipStatus,
-                supabaseStatus = shipStatus,
-                logs = shipLogs,
-                error = shipError
-            )
-            testResults = updatedResults.toMap()
-
-            // -----------------------------------------------------------------
-            // 10. COUPONS
-            // -----------------------------------------------------------------
-            progressText = "جاري فحص نظام أكواد الخصم والكوبونات..."
-            currentProgress = 0.83f
-            delay(400)
-            val couponLogs = mutableListOf<String>()
-            var couponError: DiagnosticError? = null
-            var couponStatus = TestStatus.FAILED
-
-            try {
-                val response = SupabaseClient.service.getCoupons()
-                if (response.isSuccessful) {
-                    val list = response.body() ?: emptyList()
-                    couponLogs.add("تم قراءة جدول الكوبونات بنجاح. عدد الكوبونات الحالية: ${list.size}")
-
-                    // Insert test coupon
-                    val testId = "sys_test_cpn_${System.currentTimeMillis()}"
-                    val testCpn = SupabaseCouponDto(
-                        id = testId,
-                        code = "TESTCHECK99",
-                        discountType = "PERCENTAGE",
-                        discountValue = 15.0,
-                        isActive = false
-                    )
-
-                    val insertResponse = SupabaseClient.service.upsertCoupon(testCpn)
-                    if (insertResponse.isSuccessful) {
-                        couponLogs.add("تم إدراج كود الخصم التجريبي بنجاح.")
-
-                        // Read back
-                        val rb = SupabaseClient.service.getCoupons()
-                        val found = rb.body()?.any { it.id == testId } ?: false
-                        if (found) {
-                            couponLogs.add("تم التحقق ومطابقة الكود التجريبي بنجاح.")
-                        }
-
-                        // Revert via DELETE
-                        val deleteResponse = SupabaseClient.service.deleteCoupon("eq.$testId")
-                        if (deleteResponse.isSuccessful) {
-                            couponLogs.add("تم حذف وإلغاء الكود التجريبي بنجاح.")
-                            couponStatus = TestStatus.WORKING
-                        } else {
-                            couponStatus = TestStatus.PARTIAL
-                        }
-                    } else {
-                        val (pgCode, msg) = parseErrorBody(insertResponse)
-                        couponLogs.add("فشل إدراج الكوبون التجريبي: $msg")
-                        couponError = DiagnosticError(
-                            operation = "upsertCoupon",
-                            tableOrRpc = "coupons",
-                            httpStatus = insertResponse.code(),
-                            postgresCode = pgCode,
-                            errorMessage = msg,
-                            likelyLayer = "RLS"
-                        )
-                        couponStatus = TestStatus.PARTIAL
-                    }
-                } else {
-                    val (pgCode, msg) = parseErrorBody(response)
-                    couponLogs.add("فشل قراءة جدول الكوبونات: $msg")
-                    couponError = DiagnosticError(
-                        operation = "getCoupons",
-                        tableOrRpc = "coupons",
-                        httpStatus = response.code(),
-                        postgresCode = pgCode,
-                        errorMessage = msg,
-                        likelyLayer = "RLS"
-                    )
-                }
-            } catch (e: Exception) {
-                couponLogs.add("فشل الاتصال بجدول الكوبونات: ${e.message}")
-                couponError = DiagnosticError(
-                    operation = "getCoupons",
-                    tableOrRpc = "coupons",
-                    httpStatus = 0,
-                    postgresCode = "NET_ERR",
-                    errorMessage = e.message ?: "Network Exception",
-                    likelyLayer = "Network"
-                )
-            }
-            updatedResults["coupons"] = ModuleTestResult(
-                name = "coupons",
-                arabicName = "الكوبونات (coupons)",
-                dashboardToWebsite = couponStatus,
-                websiteToDashboard = couponStatus,
-                supabaseStatus = couponStatus,
-                logs = couponLogs,
-                error = couponError
-            )
-            testResults = updatedResults.toMap()
-
-            // -----------------------------------------------------------------
-            // 11. STORE SETTINGS
-            // -----------------------------------------------------------------
-            progressText = "جاري التحقق من إعدادات المتجر وبيانات التواصل..."
-            currentProgress = 0.91f
-            delay(400)
-            val storeLogs = mutableListOf<String>()
-            var storeError: DiagnosticError? = null
-            var storeStatus = TestStatus.FAILED
-
-            try {
-                val response = SupabaseClient.service.getStoreSettings()
-                if (response.isSuccessful) {
-                    val list = response.body() ?: emptyList()
-                    storeLogs.add("تم الاتصال بجدول الإعدادات بنجاح. عدد السجلات: ${list.size}")
-
-                    if (list.isNotEmpty()) {
-                        val original = list[0]
-                        storeLogs.add("اسم المتجر المعتمد حالياً: ${original.storeName}")
-
-                        // Perform a safe temporary test
-                        val tempVal = "متجر بينكي التجريبي - ${System.currentTimeMillis()}"
-                        val tempSettings = original.copy(storeName = tempVal)
-
-                        val updateResponse = SupabaseClient.service.upsertStoreSettings(tempSettings)
-                        if (updateResponse.isSuccessful) {
-                            storeLogs.add("تم تحديث إعدادات المتجر مؤقتاً بنجاح.")
-
-                            // Read back
-                            val rb = SupabaseClient.service.getStoreSettings()
-                            val updated = rb.body()?.firstOrNull { it.id == original.id }
-                            if (updated?.storeName == tempVal) {
-                                storeLogs.add("تم التحقق وقراءة التحديث المؤقت بنجاح.")
-                            }
-
-                            // Restore
-                            val restoreResponse = SupabaseClient.service.upsertStoreSettings(original)
-                            if (restoreResponse.isSuccessful) {
-                                storeLogs.add("تمت استعادة إعدادات المتجر الأصلية بنجاح.")
-                                storeStatus = TestStatus.WORKING
-                            } else {
-                                storeStatus = TestStatus.PARTIAL
-                            }
-                        } else {
-                            val (pgCode, msg) = parseErrorBody(updateResponse)
-                            storeLogs.add("فشل تحديث إعدادات المتجر مؤقتاً: $msg")
-                            storeError = DiagnosticError(
-                                operation = "upsertStoreSettings",
-                                tableOrRpc = "store_settings",
-                                httpStatus = updateResponse.code(),
-                                postgresCode = pgCode,
-                                errorMessage = msg,
-                                likelyLayer = "RLS"
-                            )
-                            storeStatus = TestStatus.PARTIAL
-                        }
-                    } else {
-                        storeLogs.add("لا توجد سجلات حالية في جدول store_settings لتعديلها.")
-                        storeStatus = TestStatus.PARTIAL
-                    }
-                } else {
-                    val (pgCode, msg) = parseErrorBody(response)
-                    storeLogs.add("فشل قراءة جدول إعدادات المتجر: $msg")
-                    storeError = DiagnosticError(
-                        operation = "getStoreSettings",
-                        tableOrRpc = "store_settings",
-                        httpStatus = response.code(),
-                        postgresCode = pgCode,
-                        errorMessage = msg,
-                        likelyLayer = "RLS"
-                    )
-                }
-            } catch (e: Exception) {
-                storeLogs.add("فشل الاتصال بجدول إعدادات المتجر: ${e.message}")
-                storeError = DiagnosticError(
-                    operation = "getStoreSettings",
-                    tableOrRpc = "store_settings",
-                    httpStatus = 0,
-                    postgresCode = "NET_ERR",
-                    errorMessage = e.message ?: "Network Exception",
-                    likelyLayer = "Network"
-                )
-            }
-            updatedResults["store_settings"] = ModuleTestResult(
-                name = "store_settings",
-                arabicName = "إعدادات المتجر (store_settings)",
-                dashboardToWebsite = storeStatus,
-                websiteToDashboard = storeStatus,
-                supabaseStatus = storeStatus,
-                logs = storeLogs,
-                error = storeError
-            )
-            testResults = updatedResults.toMap()
-
-            // -----------------------------------------------------------------
-            // 12. PUSH DEVICES
-            // -----------------------------------------------------------------
-            progressText = "جاري اختبار تسجيل أجهزة الإشعارات الفورية..."
-            currentProgress = 1.0f
-            delay(400)
             val pushLogs = mutableListOf<String>()
             var pushError: DiagnosticError? = null
             var pushStatus = TestStatus.FAILED
 
             try {
-                // Generate a dummy device registration
-                val testId = "sys_test_dev_${System.currentTimeMillis()}"
-                val dummyDevice = SupabaseDashboardPushDeviceDto(
-                    id = testId,
-                    deviceName = "أندرويد ديباغ - فحص النظام",
-                    pushToken = "dummy_token_verify_system_${System.currentTimeMillis()}",
-                    lastActive = "2026-09-17"
+                val deviceId = java.util.UUID.randomUUID().toString()
+                val currentUserId = SupabaseClient.userId
+                val dummyToken = "test_token_valid_dto_${System.currentTimeMillis()}"
+                
+                pushLogs.add("بناء كائن الـ DTO لجهاز الدفع الفوري بنجاح:")
+                pushLogs.add("- معرّف الجهاز (UUID): $deviceId")
+                pushLogs.add("- معرّف الموظف (User UUID): ${currentUserId ?: "لا يوجد (سيسجل كـ Anonymous أو Owner افتراضي)"}")
+                pushLogs.add("- رمز التوكن: $dummyToken")
+                pushLogs.add("- نظام التشغيل: android")
+                pushLogs.add("- حالة النشاط: true")
+
+                // Try to perform a real check request to API (Post without expecting push delivery)
+                val testDevice = SupabaseDashboardPushDeviceDto(
+                    id = deviceId,
+                    userId = currentUserId,
+                    pushToken = dummyToken,
+                    platform = "android",
+                    active = true,
+                    createdAt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).format(java.util.Date()),
+                    updatedAt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).format(java.util.Date()),
+                    lastSeenAt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).format(java.util.Date())
                 )
 
-                val response = SupabaseClient.service.registerPushDevice(dummyDevice)
-                if (response.isSuccessful) {
-                    pushLogs.add("تم تسجيل الجهاز التجريبي بنجاح في جدول dashboard_push_devices.")
-                    pushLogs.add("تم التحقق من مسار التوصيل والاتصال بنجاح.")
-                    pushStatus = TestStatus.WORKING
+                if (tokenExists && !isSandbox) {
+                    val response = SupabaseClient.service.registerPushDevice(testDevice)
+                    if (response.isSuccessful) {
+                        pushLogs.add("تم تسجيل توافق هيكل الـ DTO على السيرفر بنجاح ✓")
+                        pushStatus = TestStatus.WORKING
+                    } else {
+                        val (pgCode, msg) = parseErrorBody(response)
+                        pushLogs.add("فشل استجابة السيرفر لإدراج هيكل الجهاز: $msg")
+                        pushError = DiagnosticError(
+                            operation = "registerPushDevice",
+                            tableOrRpc = "dashboard_push_devices",
+                            httpStatus = response.code(),
+                            postgresCode = pgCode,
+                            errorMessage = msg,
+                            likelyLayer = "RLS / Database Schema"
+                        )
+                    }
                 } else {
-                    val (pgCode, msg) = parseErrorBody(response)
-                    pushLogs.add("فشل تسجيل الجهاز التجريبي: $msg")
-                    pushError = DiagnosticError(
-                        operation = "registerPushDevice",
-                        tableOrRpc = "dashboard_push_devices",
-                        httpStatus = response.code(),
-                        postgresCode = pgCode,
-                        errorMessage = msg,
-                        likelyLayer = "RLS"
-                    )
+                    pushLogs.add("تنبيه: تم فحص وبناء كائن الـ DTO بنجاح برمجياً، ولكن تم تخطي استدعاء السيرفر لعدم وجود جلسة دخول حقيقية.")
+                    pushStatus = TestStatus.PARTIAL
                 }
             } catch (e: Exception) {
-                pushLogs.add("فشل الاتصال بجدول تسجيل الأجهزة: ${e.message}")
+                pushLogs.add("خطأ في تشغيل فحص الجهاز: ${e.message}")
                 pushError = DiagnosticError(
                     operation = "registerPushDevice",
                     tableOrRpc = "dashboard_push_devices",
                     httpStatus = 0,
-                    postgresCode = "NET_ERR",
-                    errorMessage = e.message ?: "Network Exception",
-                    likelyLayer = "Network"
+                    postgresCode = "DEV_ERR",
+                    errorMessage = e.message ?: "Unknown Local Error",
+                    likelyLayer = "UI / Controller"
                 )
             }
-            updatedResults["notifications"] = ModuleTestResult(
-                name = "notifications",
-                arabicName = "أجهزة الإشعارات (dashboard_push_devices)",
+
+            updatedResults["push_device_dto"] = ModuleTestResult(
+                name = "push_device_dto",
+                arabicName = "توافق وهيكل جهاز الإشعارات",
                 dashboardToWebsite = pushStatus,
                 websiteToDashboard = pushStatus,
                 supabaseStatus = pushStatus,
@@ -1124,11 +518,91 @@ fun HealthCheckScreen(
             )
             testResults = updatedResults.toMap()
 
-            progressText = "اكتملت كافة الاختبارات بنجاح!"
+            // -----------------------------------------------------------------
+            // 7. ORDERS ITEMS JSONB ANALYSIS
+            // -----------------------------------------------------------------
+            progressText = "جاري فحص بنية الطلبات والتأكد من مصفوفة الـ JSONB..."
+            currentProgress = 1.00f
+            delay(300)
+
+            val orderLogs = mutableListOf<String>()
+            var orderError: DiagnosticError? = null
+            var orderStatus = TestStatus.FAILED
+
+            if (tokenExists && !isSandbox) {
+                try {
+                    val response = SupabaseClient.service.getOrders()
+                    if (response.isSuccessful) {
+                        val orders = response.body() ?: emptyList()
+                        orderLogs.add("تم قراءة جدول orders بنجاح.")
+                        orderLogs.add("عدد الطلبات الحالية المسترجعة: ${orders.size}")
+                        
+                        if (orders.isNotEmpty()) {
+                            val sample = orders.firstOrNull()
+                            if (sample != null) {
+                                orderLogs.add("تحليل الطلب النموذجي رقم: ${sample.orderNumber}")
+                                orderLogs.add("الاسم: ${sample.customerName}")
+                                orderLogs.add("المنتجات الفرعية المدمجة (JSONB items array):")
+                                
+                                val itemsList = sample.items
+                                if (itemsList != null) {
+                                    orderLogs.add("- تم تفكيك الـ JSONB Array بنجاح بواسطة Moshi الكائنية.")
+                                    orderLogs.add("- يحتوي الطلب على (${itemsList.size}) منتجات فرعية داخل حقل JSONB واحد.")
+                                    for ((idx, item) in itemsList.withIndex()) {
+                                        orderLogs.add("  [#${idx + 1}] منتج: ${item.productName ?: "مجهول"} | الكمية: ${item.quantity ?: 1} | الإجمالي: ${item.lineTotal ?: 0.0}")
+                                    }
+                                } else {
+                                    orderLogs.add("- تحذير: حقل items يحتوي على قيمة فارغة أو غير مهيأة برمجياً كـ JSON Array.")
+                                }
+                            }
+                        } else {
+                            orderLogs.add("تم الاستعلام بنجاح ولكن الجدول فارغ من البيانات حالياً لتفكيك طلب عشوائي.")
+                        }
+                        
+                        orderStatus = TestStatus.WORKING
+                    } else {
+                        val (pgCode, msg) = parseErrorBody(response)
+                        orderLogs.add("فشل قراءة جدول الطلبات: $msg")
+                        orderError = DiagnosticError(
+                            operation = "getOrders",
+                            tableOrRpc = "orders",
+                            httpStatus = response.code(),
+                            postgresCode = pgCode,
+                            errorMessage = msg,
+                            likelyLayer = "RLS"
+                        )
+                    }
+                } catch (e: Exception) {
+                    orderLogs.add("فشل اتصال قراءة الطلبات: ${e.message}")
+                    orderError = DiagnosticError(
+                        operation = "getOrders",
+                        tableOrRpc = "orders",
+                        httpStatus = 0,
+                        postgresCode = "NET_ERR",
+                        errorMessage = e.message ?: "Network Exception",
+                        likelyLayer = "Network"
+                    )
+                }
+            } else {
+                orderLogs.add("تخطى: هذا الفحص يتطلب جلسة مصادقة حقيقية نشطة لقراءة الطلبات الإدارية.")
+                orderStatus = TestStatus.NOT_TESTABLE
+            }
+
+            updatedResults["orders_jsonb_items"] = ModuleTestResult(
+                name = "orders_jsonb_items",
+                arabicName = "تحليل تفاصيل منتجات الطلبات (JSONB)",
+                dashboardToWebsite = orderStatus,
+                websiteToDashboard = orderStatus,
+                supabaseStatus = orderStatus,
+                logs = orderLogs,
+                error = orderError
+            )
+            testResults = updatedResults.toMap()
+
+            progressText = "اكتمل فحص السحابة والربط بنجاح!"
             isRunning = false
         }
     }
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -1246,8 +720,10 @@ fun HealthCheckScreen(
                         }
 
                         // Compact single line summary
+                        val authStatusText = if (isAuth) "Authenticated ✓" else "Not Authenticated ✗"
+                        val userExistsText = if (rawUserId != "لا يوجد" && rawUserId.isNotBlank()) "User ID موجود" else "User ID غير موجود"
                         Text(
-                            text = "مصادق: ${if (isAuth) "نعم ✓" else "لا ✗"} | الهوية: $shortUserId | الدور: $dbRole",
+                            text = "$authStatusText | $userExistsText",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontWeight = FontWeight.Medium
@@ -1515,18 +991,13 @@ fun ModuleResultCard(result: ModuleTestResult) {
 // Initialise empty list of modules
 fun getInitialModules(): Map<String, ModuleTestResult> {
     val initialList = listOf(
-        Pair("auth", "المصادقة والصلاحيات (Auth)"),
-        Pair("products", "المنتجات (catalog_products)"),
-        Pair("categories", "الأقسام (categories)"),
-        Pair("offers_coupons", "البنرات والعروض (banners)"),
-        Pair("website_editor", "تخصيص الموقع (site_customizations)"),
-        Pair("orders", "تدفق الطلبات (orders)"),
-        Pair("orders_dashboard_to_website", "تحديث حالات الطلبات"),
-        Pair("prime", "باقات برايم (prime_subscriptions)"),
-        Pair("shipping", "الشحن والأسعار (shipping_governorates)"),
-        Pair("coupons", "الكوبونات (coupons)"),
-        Pair("store_settings", "إعدادات المتجر (store_settings)"),
-        Pair("notifications", "أجهزة الإشعارات (dashboard_push_devices)")
+        Pair("url_check", "التحقق من عنوان السحابة (Supabase URL)"),
+        Pair("auth_login", "جلسة المصادقة والدخول (Auth Login)"),
+        Pair("staff_profile_permissions", "ملف الموظف وصلاحيات الـ JSONB"),
+        Pair("rls_reads", "صلاحيات قراءة جداول الـ RLS"),
+        Pair("catalog_products_read", "القراءة العامة للمتجر (catalog_products)"),
+        Pair("push_device_dto", "توافق وهيكل جهاز الإشعارات"),
+        Pair("orders_jsonb_items", "تحليل تفاصيل منتجات الطلبات (JSONB)")
     )
     return initialList.associate { (name, arabic) ->
         name to ModuleTestResult(
