@@ -66,6 +66,7 @@ fun HealthCheckScreen(
     currentUser: AdminUser?,
     modifier: Modifier = Modifier
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     var isRunning by remember { mutableStateOf(false) }
     var progressText by remember { mutableStateOf("") }
@@ -111,6 +112,30 @@ fun HealthCheckScreen(
         testResults = getInitialModules()
 
         scope.launch {
+            // 0. Ensure session is loaded and refreshed
+            if (SupabaseClient.accessToken == null || SupabaseClient.accessToken == "sandbox_token") {
+                val prefs = context.getSharedPreferences("pinky_auth_prefs", android.content.Context.MODE_PRIVATE)
+                val token = prefs.getString("user_token", null)
+                val rToken = prefs.getString("refresh_token", null)
+                val expiresAt = prefs.getLong("expires_at", 0L)
+                val userId = prefs.getString("user_id", null)
+                if (token != null && userId != null) {
+                    SupabaseClient.accessToken = token
+                    SupabaseClient.refreshToken = rToken
+                    SupabaseClient.expiresAt = expiresAt
+                    SupabaseClient.userId = userId
+                    SupabaseClient.isAuthenticated = true
+                    SupabaseClient.isSessionReady = true
+                }
+            }
+            if (SupabaseClient.accessToken != null && SupabaseClient.accessToken != "sandbox_token") {
+                try {
+                    SupabaseClient.performTokenRefresh()
+                } catch (e: Exception) {
+                    android.util.Log.e("HealthCheck", "Session auto-refresh failed: ${e.message}")
+                }
+            }
+
             val updatedResults = testResults.toMutableMap()
 
             // -----------------------------------------------------------------
@@ -168,36 +193,28 @@ fun HealthCheckScreen(
             val isSandbox = SupabaseClient.accessToken == "sandbox_token"
 
             authLogs.add("حالة تهيئة المصادقة (Auth Ready): $isInit")
-            if (tokenExists) {
-                if (isSandbox) {
-                    authLogs.add("تنبيه: أنت مسجل الدخول باستخدام وضع المطور التجريبي (Sandbox).")
-                    authLogs.add("لتشغيل فحوصات حقيقية على قاعدة البيانات والـ RLS، يرجى تسجيل الدخول أولاً بحساب موظف حقيقي (مثل ilnemrawy@gmail.com).")
-                    authError = DiagnosticError(
-                        operation = "checkAuth",
-                        tableOrRpc = "auth_session",
-                        httpStatus = 401,
-                        postgresCode = "SANDBOX_ACTIVE",
-                        errorMessage = "الجلسة الحالية تجريبية (Sandbox) وليست حقيقية.",
-                        likelyLayer = "Auth"
-                    )
-                    authStatus = TestStatus.PARTIAL
-                } else {
-                    authLogs.add("جلسة المصادقة الحقيقية نشطة ✓")
-                    authLogs.add("معرّف المستخدم (User UUID): ${SupabaseClient.userId ?: "مفقود"}")
-                    authLogs.add("البريد الإلكتروني للـ Owner/Staff: ${currentUser?.email ?: "مجهول"}")
-                    authLogs.add("الرتبة النشطة في التطبيق: ${currentUser?.role?.arabicLabel ?: "مجهول"}")
-                    authStatus = TestStatus.WORKING
-                }
+            if (tokenExists && !isSandbox) {
+                authLogs.add("جلسة المصادقة الحقيقية نشطة ✓")
+                authLogs.add("معرّف المستخدم (User UUID): ${SupabaseClient.userId ?: "مفقود"}")
+                authLogs.add("البريد الإلكتروني للـ Owner/Staff: ${currentUser?.email ?: "مجهول"}")
+                authLogs.add("الرتبة النشطة في التطبيق: ${currentUser?.role?.arabicLabel ?: "مجهول"}")
+                authStatus = TestStatus.WORKING
             } else {
-                authLogs.add("خطأ: لا توجد جلسة مصادقة نشطة. الرجاء الدخول أولاً.")
+                authLogs.add("لا توجد جلسة مصادقة صالحة ✗")
+                if (isSandbox) {
+                    authLogs.add("تنبيه: الجلسة الحالية تجريبية (Sandbox) وليست حقيقية.")
+                } else {
+                    authLogs.add("السبب: لم يتم العثور على توكن مصادقة نشط في الذاكرة أو الشaredPreferences.")
+                }
                 authError = DiagnosticError(
                     operation = "checkAuth",
                     tableOrRpc = "auth_session",
                     httpStatus = 401,
                     postgresCode = "NO_SESSION",
-                    errorMessage = "لم يتم العثور على توكن مصادقة صالح. يرجى تسجيل الدخول من الشاشة الرئيسية للحصول على توكن جديد.",
+                    errorMessage = "لا توجد جلسة مصادقة صالحة حقيقية. يرجى تسجيل الدخول للحصول على توكن جديد.",
                     likelyLayer = "Auth"
                 )
+                authStatus = TestStatus.FAILED
             }
 
             updatedResults["auth_login"] = ModuleTestResult(

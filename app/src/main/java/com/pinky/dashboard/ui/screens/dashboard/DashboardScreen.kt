@@ -299,9 +299,7 @@ fun DashboardScreen(
                 EmptyStateCard(
                     title = "لا توجد طلبات حقيقية",
                     message = "الطلبات الحقيقية التي تتم عبر متجر بينكي ستظهر هنا تلقائياً.",
-                    icon = Icons.Outlined.ReceiptLong,
-                    actionButtonText = "تهيئة بيانات تجريبية",
-                    onActionClick = onQuickAddSampleData
+                    icon = Icons.Outlined.ReceiptLong
                 )
             }
         } else {

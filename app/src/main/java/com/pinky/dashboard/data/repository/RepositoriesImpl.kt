@@ -1203,24 +1203,6 @@ class AuthRepositoryImpl(private val context: android.content.Context) : AuthRep
 
     override suspend fun initializeAuthSession(): Boolean = withContext(Dispatchers.IO) {
         android.util.Log.i("SupabaseAuth", "AUTH_INIT_STARTED")
-        val isPlaceholderKey = SupabaseClient.supabaseAnonKey.contains("placeholder")
-        if (isPlaceholderKey) {
-            SupabaseClient.isSessionReady = true
-            SupabaseClient.isAuthenticated = true
-            val roleStr = prefs.getString("user_role", UserRole.OWNER.name) ?: UserRole.OWNER.name
-            val role = try { UserRole.valueOf(roleStr) } catch (e: Exception) { UserRole.OWNER }
-            val email = prefs.getString("user_email", "ilnemrawy@gmail.com") ?: "ilnemrawy@gmail.com"
-            val user = AdminUser(
-                id = "sandbox_user_id",
-                name = if (role == UserRole.OWNER) "إسلام النمراوي (Sandbox)" else "مسؤول تجريبي (Sandbox)",
-                email = email,
-                role = role,
-                permissions = Permission.defaultPermissionsFor(role)
-            )
-            _currentUser.value = user
-            android.util.Log.i("SupabaseAuth", "AUTH_SESSION_RESTORED: user_id=sandbox_user_id (Sandbox)")
-            return@withContext true
-        }
 
         val token = prefs.getString("user_token", null)
         val refreshToken = prefs.getString("refresh_token", null)

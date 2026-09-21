@@ -722,7 +722,8 @@ object SupabaseClient {
                                 addHeader("Authorization", "Bearer $activeToken")
                                 android.util.Log.d("SupabaseAuth", "REQUEST_AUTH_ATTACHED=true | REQUEST_ROLE=authenticated")
                             } else {
-                                android.util.Log.d("SupabaseAuth", "REQUEST_AUTH_ATTACHED=false | REQUEST_ROLE=anonymous")
+                                addHeader("Authorization", "Bearer $supabaseAnonKey")
+                                android.util.Log.d("SupabaseAuth", "REQUEST_AUTH_ATTACHED=true | REQUEST_ROLE=anonymous")
                             }
                         } else {
                             android.util.Log.d("SupabaseAuth", "REQUEST_AUTH_ATTACHED=true (pre-existing)")

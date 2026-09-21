@@ -48,12 +48,8 @@ abstract class PinkyDatabase : RoomDatabase() {
                 .build()
                 INSTANCE = instance
 
-                // Automatically seed sandbox data if Supabase is unconfigured (using default placeholder)
-                val isPlaceholder = try {
-                    com.pinky.dashboard.BuildConfig.SUPABASE_ANON_KEY.contains("placeholder")
-                } catch (e: Throwable) {
-                    true
-                }
+                // Seeding of mock sandbox data is permanently disabled per production requirements.
+                val isPlaceholder = false
                 if (isPlaceholder) {
                     CoroutineScope(Dispatchers.IO).launch {
                         try {
